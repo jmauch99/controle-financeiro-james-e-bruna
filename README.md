@@ -1,13 +1,13 @@
-# Clara Finanças — GitHub Pages
+# Controle Financeiro James e Bruna — GitHub Pages
 
 Site de controle financeiro em HTML/CSS/JS, com modo de demonstração local e modo de conta online via Supabase.
 
 ## Publicação no GitHub Pages
 
-1. Crie um repositório no GitHub (ex.: `clara-financas`).
+1. Crie um repositório no GitHub (ex.: `controle-financeiro-james-e-bruna`).
 2. Envie **todos os arquivos desta pasta** para a raiz do repositório.
 3. Em **Settings → Pages → Build and deployment**, escolha **Deploy from a branch**, branch **main**, pasta **/(root)** e salve.
-4. Acesse `https://SEU-USUARIO.github.io/clara-financas/` após o deploy.
+4. Acesse `https://SEU-USUARIO.github.io/controle-financeiro-james-e-bruna/` após o deploy.
 
 ## Ativar login real e sincronização
 
