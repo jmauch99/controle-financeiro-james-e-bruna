@@ -1,258 +1,337 @@
-/* Controle Financeiro James e Bruna — aplicação estática com opção de sincronização Supabase. */
+*/
+
 (()=>{'use strict';
+
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+
 const uid=()=>crypto.randomUUID?crypto.randomUUID():`${Date.now()}-${Math.random()}`;
+
 const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
+
 const ym=d=>String(d||'').slice(0,7);
+
 const monthShift=(date,n)=>{const [y,m,day]=date.split('-').map(Number);const first=new Date(y,m-1+n,1);let last=new Date(first.getFullYear(),first.getMonth()+1,0).getDate();return `${first.getFullYear()}-${String(first.getMonth()+1).padStart(2,'0')}-${String(Math.min(day,last)).padStart(2,'0')}`};
+
 const fmt=v=>(Number(v)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
 const parseNum=v=>Number(String(v??'0').replace(',','.'))||0;
+
 const sum=(arr,key='amount')=>arr.reduce((a,x)=>a+Number(x[key]||0),0);
+
 const monthTitle=m=>{const [y,n]=m.split('-').map(Number);return new Date(y,n-1,1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'})};
+
 const empty=()=>({version:1,transactions:[],cards:[],investments:[],goals:[],paidInvoices:{}});
+
 const valid=d=>d&&typeof d==='object'&&Array.isArray(d.transactions)&&Array.isArray(d.cards)&&Array.isArray(d.investments)&&Array.isArray(d.goals)&&d.paidInvoices&&typeof d.paidInvoices==='object';
+
 let db=empty(),page='dashboard',scope='month',month=today().slice(0,7),client=null,user=null,cloud=false,saving=Promise.resolve(),modalType='',editing=null,toastTimer;
+
 const icons=()=>window.lucide?.createIcons({attrs:{'stroke-width':1.6}});
+
 // Privacidade visual: somente a renderização é mascarada. O banco e os backups não são modificados.
+
 let privacyHidden=sessionStorage.getItem('jb_privacy_hidden')==='1';
+
 const privacyOriginals=new WeakMap();
+
 function applyPrivacy(){
+
   const root=$('#pageContent');
+
   if(!root)return;
+
   const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
+
   let node;
+
   while((node=walker.nextNode())){
+
     if(node.parentElement?.closest('script,style,textarea,button,select,option'))continue;
+
     if(privacyHidden){
+
       if(privacyOriginals.has(node))continue;
+
       const source=node.nodeValue;
+
       const masked=source.replace(/(?:[+\-−]\s*)?R\$\s*-?\s*[\d.,]+/g,'R$ •••••').replace(/\b\d+(?:[.,]\d+)?%/g,'••%');
+
       if(masked!==source){privacyOriginals.set(node,source);node.nodeValue=masked;}
+
     } else if(privacyOriginals.has(node)){
+
       node.nodeValue=privacyOriginals.get(node);
+
       privacyOriginals.delete(node);
+
     }
+
   }
+
   document.body.classList.toggle('privacy-hidden',privacyHidden);
+
   const toggle=$('#privacyToggle');
+
   if(toggle){
+
     toggle.setAttribute('aria-pressed',String(privacyHidden));
+
     toggle.setAttribute('aria-label',privacyHidden?'Mostrar informações financeiras':'Ocultar informações financeiras');
+
     toggle.title=privacyHidden?'Mostrar informações financeiras':'Ocultar informações financeiras';
+
     toggle.innerHTML=`<i data-lucide="${privacyHidden?'eye-off':'eye'}"></i>`;
+
   }
+
   icons();
+
 }
+
 $('#privacyToggle').addEventListener('click',()=>{
+
  privacyHidden=!privacyHidden;
+
  sessionStorage.setItem('jb_privacy_hidden',privacyHidden?'1':'0');
+
  applyPrivacy();
+
 });
 
+ 
+
 const notify=s=>{const t=$('#toast');t.textContent=s;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3100)};
+
 const localKey='clara_financas_demo_v1';
+
 const stored=()=>{try{const d=JSON.parse(localStorage.getItem(localKey));return valid(d)?d:empty()}catch{return empty()}};
-function commit() {
-  if (!cloud) {
-    localStorage.setItem(localKey, JSON.stringify(db));
-    $('#syncStatus').textContent = 'Salvo neste navegador';
-    return Promise.resolve();
-  }
 
-  $('#syncStatus').textContent = 'Salvando…';
-  const snapshot = structuredClone(db);
+function commit(){if(!cloud){localStorage.setItem(localKey,JSON.stringify(db));$('#syncStatus').textContent='Salvo neste navegador';return Promise.resolve()}$('#syncStatus').textContent='Salvando…';const snapshot=structuredClone(db);saving=saving.catch(()=>{}).then(async()=>{const {error}=await client.from('finance_data').upsert({user_id:user.id,payload:snapshot,updated_at:new Date().toISOString()},{onConflict:'user_id'});if(error)throw error;$('#syncStatus').textContent='Sincronizado'}).catch(e=>{$('#syncStatus').textContent='Erro ao salvar';notify('Falha na sincronização: '+e.message);throw e});return saving}
 
-  saving = saving.catch(() => {}).then(async () => {
-    const { error } = await client.from('finance_data').upsert({
-      user_id: user.id,
-      payload: snapshot,
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'user_id' });
+const transact=fn=>{fn();render();commit().catch(()=>{})};
 
-    if (error) throw error;
-    $('#syncStatus').textContent = 'Sincronizado';
-  }).catch(e => {
-    $('#syncStatus').textContent = 'Erro ao salvar';
-    notify('Falha na sincronização: ' + e.message);
-    throw e;
-  });
+async function init(){const conf=window.CLARA_CONFIG||{};cloud=!!(conf.supabaseUrl&&conf.supabasePublishableKey);if(cloud){if(!window.supabase){$('#auth').classList.remove('hidden');$('#authMessage').textContent='Não foi possível carregar a biblioteca de autenticação.';return}// A URL base deve ser a raiz do projeto, nunca /rest/v1 ou /auth/v1.
 
-  return saving;
-}
+const supabaseUrl=String(conf.supabaseUrl).trim().replace(/\/(?:rest|auth)\/v1\/?$/i,'').replace(/\/+$/,'');
 
-const transact = fn => {
-  fn();
-  render();
-  commit().catch(() => {});
-};
+client=window.supabase.createClient(supabaseUrl,conf.supabasePublishableKey);const {data}=await client.auth.getSession();if(data?.session){await enter(data.session.user)}else $('#auth').classList.remove('hidden');client.auth.onAuthStateChange((_event,session)=>{if(!session?.user&&user){user=null;$('#app').classList.add('hidden');$('#auth').classList.remove('hidden')}})}else{db=stored();$('#demoBanner').classList.remove('hidden');$('#logout').classList.add('hidden');enterUI('Demonstração local')}}
 
-// INICIALIZAÇÃO CORRIGIDA DO SUPABASE
-async function init() {
-  const conf = window.CLARA_CONFIG || {};
+async function enter(u){user=u;const {data,error}=await client.from('finance_data').select('payload').eq('user_id',u.id).maybeSingle();if(error){$('#auth').classList.remove('hidden');$('#authMessage').textContent='Erro ao buscar seus dados: '+error.message;return}db=valid(data?.payload)?data.payload:empty();if(!data)await commit().catch(()=>{});enterUI(u.email||'Minha conta')}
 
-  // Remove caminhos incorretos da URL do projeto
-  const supabaseUrl = String(conf.supabaseUrl || '')
-    .trim()
-    .replace(/\/(?:rest|auth)\/v1\/?$/i, '')
-    .replace(/\/+$/, '');
+function profileInfo(){return cloud?(user?.user_metadata||{}):JSON.parse(localStorage.getItem('james_bruna_profile')||'{}')}
 
-  const supabaseKey = String(
-    conf.supabasePublishableKey || ''
-  ).trim();
-
-  cloud = Boolean(supabaseUrl && supabaseKey);
-
-  if (cloud) {
-    if (!window.supabase) {
-      $('#auth').classList.remove('hidden');
-      $('#authMessage').textContent =
-        'Não foi possível carregar a biblioteca de autenticação.';
-      return;
-    }
-
-    // Usa somente a URL base do Supabase
-    client = window.supabase.createClient(
-      supabaseUrl,
-      supabaseKey
-    );
-
-    const { data, error } = await client.auth.getSession();
-
-    if (error) {
-      console.error('Erro ao recuperar sessão:', error.message);
-    }
-
-    if (data?.session) {
-      await enter(data.session.user);
-    } else {
-      $('#auth').classList.remove('hidden');
-    }
-
-    client.auth.onAuthStateChange((_event, session) => {
-      if (!session?.user && user) {
-        user = null;
-        $('#app').classList.add('hidden');
-        $('#auth').classList.remove('hidden');
-      }
-    });
-
-  } else {
-    db = stored();
-    $('#demoBanner').classList.remove('hidden');
-    $('#logout').classList.add('hidden');
-    enterUI('Demonstração local');
-  }
-}
-
-async function enter(u) {
-  user = u;
-
-  const { data, error } = await client
-    .from('finance_data')
-    .select('payload')
-    .eq('user_id', u.id)
-    .maybeSingle();
-
-  if (error) {
-    $('#auth').classList.remove('hidden');
-    $('#authMessage').textContent =
-      'Erro ao buscar seus dados: ' + error.message;
-    return;
-  }
-
-  db = valid(data?.payload) ? data.payload : empty();
-
-  if (!data) {
-    await commit().catch(() => {});
-  }
-
-  enterUI(u.email || 'Minha conta');
-}
-
-function profileInfo() {
-  return cloud
-    ? (user?.user_metadata || {})
-    : JSON.parse(
-        localStorage.getItem('james_bruna_profile') || '{}'
-      );
-}
 function updateProfileHeader(){const info=profileInfo(),name=(info.full_name||'').trim(),label=name||user?.email||'Demonstração local';$('#accountName').textContent=name||'Meu espaço';$('#accountLabel').textContent=user?.email||'Perfil local';const initials=(name||'F').split(/\s+/).map(s=>s[0]).slice(0,2).join('').toUpperCase();$('#sideAvatar').textContent=initials;$('#profileShortcut').textContent=initials;$('#profileShortcut').title='Editar perfil de '+label}
+
 function enterUI(name){$('#auth').classList.add('hidden');$('#app').classList.remove('hidden');updateProfileHeader();$('#month').value=month;render()}
+
 $('#profileShortcut').onclick=()=>{page='profile';render()};
+
 $('#authForm').onsubmit=async e=>{e.preventDefault();$('#authMessage').textContent='';const email=$('#email').value.trim(),password=$('#password').value;const {data,error}=await client.auth.signInWithPassword({email,password});if(error){$('#authMessage').textContent=error.message;return}await enter(data.user)};
+
 $('#signup').onclick=async()=>{if(!client)return;const email=$('#email').value.trim(),password=$('#password').value;if(!email||password.length<6){$('#authMessage').textContent='Informe e-mail e senha de pelo menos 6 caracteres.';return}const {data,error}=await client.auth.signUp({email,password});$('#authMessage').textContent=error?.message||(data?.session?'Conta criada. Entrando…':'Verifique seu e-mail para confirmar o cadastro.');if(data?.session)await enter(data.user)};
+
 $('#logout').onclick=async()=>{if(!client)return;await client.auth.signOut();user=null;db=empty();$('#app').classList.add('hidden');$('#auth').classList.remove('hidden')};
+
 $('#themeToggle').onclick=()=>{document.body.classList.toggle('dark');localStorage.setItem('clara_dark',document.body.classList.contains('dark')?'1':'0');icons()};if(localStorage.getItem('clara_dark')==='1')document.body.classList.add('dark');
+
 $('#nav').addEventListener('click',navigate);$$('.sidebar nav').forEach(n=>n.addEventListener('click',navigate));function navigate(e){const b=e.target.closest('[data-page]');if(!b)return;page=b.dataset.page;render()}
+
 $('#filters').onclick=e=>{const b=e.target.closest('[data-scope]');if(!b)return;scope=b.dataset.scope;render()};$('#month').onchange=e=>{month=e.target.value||ym(today());render()};
+
 function entries(){const out=[];for(const t of db.transactions){if(t.kind==='expense'&&t.cardId){const parts=Math.max(1,+t.installments||1);for(let i=0;i<parts;i++)out.push({...t,id:`${t.id}:${i}`,originId:t.id,date:monthShift(t.date,i),amount:partValue(+t.amount,parts,i),part:i+1,total:parts,isCard:true,invoiceMonth:invoiceFor(t.cardId,monthShift(t.date,i))})}else if(t.repeat==='monthly'){for(let i=-60;i<=120;i++){const d=monthShift(t.date,i);if(i<0)continue;out.push({...t,id:`${t.id}:${i}`,originId:t.id,date:d,repeatInstance:true})}}else out.push({...t,originId:t.id})}return out}
+
 function partValue(total,n,i){const cents=Math.round(total*100),base=Math.floor(cents/n);return (base+(i===n-1?cents-base*n:0))/100}
+
 function invoiceFor(cardId,purchaseDate){const c=db.cards.find(c=>c.id===cardId);if(!c)return ym(purchaseDate);const [y,m,d]=purchaseDate.split('-').map(Number);let billing=ym(purchaseDate);if(d>=Number(c.closingDay))billing=ym(monthShift(`${y}-${String(m).padStart(2,'0')}-01`,1));return billing}
+
 function dueFor(card,invoiceMonth){const d=+card.dueDay;const [y,m]=invoiceMonth.split('-').map(Number);const dueMonth=monthShift(`${invoiceMonth}-01`,1);const [dy,dm]=dueMonth.split('-').map(Number);const last=new Date(dy,dm,0).getDate();return `${dueMonth}-${String(Math.min(d,last)).padStart(2,'0')}`}
+
 function filtered(items,key='date'){return scope==='all'?items:items.filter(x=>ym(x[key])===month)};
+
 function paid(cardId,m){return !!db.paidInvoices[`${cardId}_${m}`]}
+
 function paymentDate(cardId,m){const v=db.paidInvoices[`${cardId}_${m}`];if(!v)return null;if(typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v))return v;const card=db.cards.find(c=>c.id===cardId);return card?dueFor(card,m):`${m}-01`}
+
 function cashExpenses(period=null){const arr=entries(),direct=arr.filter(e=>e.kind==='expense'&&!e.isCard&&(!period||ym(e.date)===period));const bills=arr.filter(e=>e.isCard&&paymentDate(e.cardId,e.invoiceMonth)&&(!period||ym(paymentDate(e.cardId,e.invoiceMonth))===period)).map(e=>({...e,date:paymentDate(e.cardId,e.invoiceMonth),cashCard:true}));return [...direct,...bills]}
+
 function currentExpenses(){return cashExpenses(scope==='month'?month:null)}
+
 function expenseGroup(e){return e.expenseType==='fixed'||(e.repeat==='monthly'&&!e.isCard)?'fixed':'general'}
 
+ 
+
 function isExpenseInCashflow(e){return e.kind==='expense'&&!e.isCard}
+
 function totals(){const all=entries();const incomes=all.filter(e=>e.kind==='income'&&(scope==='all'||ym(e.date)===month));const expenses=currentExpenses();const receivable=sum(all.filter(e=>e.isCard&&(scope==='all'||e.invoiceMonth===month)));return{income:sum(incomes),expenses:sum(expenses),balance:sum(incomes)-sum(expenses),cardBills:receivable}}
 
+ 
+
 function button(label,act='new',kind='primary',icon='plus'){return `<button class="btn ${kind}" data-action="${act}"><i data-lucide="${icon}"></i>${label}</button>`}
-const titles={dashboard:['Visão geral','Tudo que importa, em um só lugar.','SEU PAINEL'],transactions:['Lançamentos','Acompanhe receitas, despesas e recorrências.','MOVIMENTAÇÕES'],'general-expenses':['Despesas gerais','Gastos variáveis efetivamente pagos.','REGIME DE CAIXA'],'fixed-costs':['Custos fixos','Despesas recorrentes e fixas pagas.','REGIME DE CAIXA'],spending:['Gráficos de gastos','Veja a distribuição dos seus gastos pagos.','ANÁLISE DE DESPESAS'],cards:['Cartões e faturas','Controle seus cartões e pagamentos futuros.','SEUS CARTÕES'],investments:['Investimentos','Acompanhe sua carteira e aportes.','PATRIMÔNIO'],reports:['Relatórios','Entenda a evolução do seu dinheiro.','ANÁLISE FINANCEIRA'],goals:['Metas','Transforme planos em conquistas.','PLANEJAMENTO'],data:['Importação e backup','Seus dados, sempre sob seu controle.','FERRAMENTAS'],profile:['Meu perfil','Personalize suas informações de usuário.','MINHA CONTA'],settings:['Configurações','Personalize sua experiência.','PREFERÊNCIAS']};
-function render(){const [title,sub,ey]=titles[page];$('#pageTitle').textContent=title;$('#pageSubtitle').textContent=sub;$('#eyebrow').textContent=ey;$('#crumb').textContent=title;$$('[data-page]').forEach(x=>x.classList.toggle('active',x.dataset.page===page));$$('[data-scope]').forEach(x=>x.classList.toggle('active',x.dataset.scope===scope));$('#month').value=month;$('#month').closest('label').style.display=scope==='month'?'flex':'none';$('#filters').classList.toggle('hidden',['data','settings','profile'].includes(page));$('#pageActions').innerHTML=({dashboard:button('Novo lançamento'),transactions:button('Novo lançamento'),'general-expenses':button('Nova despesa'), 'fixed-costs':button('Novo custo fixo'), spending:'',cards:button('Novo cartão','new-card'),investments:button('Novo investimento','new-invest'),reports:button('Exportar CSV','export-csv','outline','download'),goals:button('Nova meta','new-goal'),data:'',profile:'',settings:''})[page];$('#pageContent').innerHTML=({dashboard:dashboard,transactions:transactions,'general-expenses':()=>expensePage('general'),'fixed-costs':()=>expensePage('fixed'),spending:spending,cards:cards,investments:investments,reports:reports,goals:goals,data:dataPage,profile:profilePage,settings:settings})[page]();applyPrivacy()}
+
+const titles={dashboard:['Visão geral','Tudo que importa, em um só lugar.','SEU PAINEL'],transactions:['Lançamentos','Acompanhe receitas, despesas e recorrências.','MOVIMENTAÇÕES'],'general-expenses':['Despesas gerais','Gastos variáveis efetivamente pagos.','REGIME DE CAIXA'],'fixed-costs':['Custos fixos','Despesas recorrentes e fixas pagas.','REGIME DE CAIXA'],spending:['Gráficos de gastos','Veja a distribuição dos seus gastos pagos.','ANÁLISE DE DESPESAS'],commitments:['Compromissos futuros','Compras já realizadas que ainda serão pagas.','PROJEÇÃO DE CAIXA'],cards:['Cartões e faturas','Controle seus cartões e pagamentos futuros.','SEUS CARTÕES'],investments:['Investimentos','Acompanhe sua carteira e aportes.','PATRIMÔNIO'],reports:['Relatórios','Entenda a evolução do seu dinheiro.','ANÁLISE FINANCEIRA'],goals:['Metas','Transforme planos em conquistas.','PLANEJAMENTO'],data:['Importação e backup','Seus dados, sempre sob seu controle.','FERRAMENTAS'],profile:['Meu perfil','Personalize suas informações de usuário.','MINHA CONTA'],settings:['Configurações','Personalize sua experiência.','PREFERÊNCIAS']};
+
+function render(){const [title,sub,ey]=titles[page];$('#pageTitle').textContent=title;$('#pageSubtitle').textContent=sub;$('#eyebrow').textContent=ey;$('#crumb').textContent=title;$$('[data-page]').forEach(x=>x.classList.toggle('active',x.dataset.page===page));$$('[data-scope]').forEach(x=>x.classList.toggle('active',x.dataset.scope===scope));$('#month').value=month;$('#month').closest('label').style.display=scope==='month'?'flex':'none';$('#filters').classList.toggle('hidden',['data','settings','profile'].includes(page));$('#pageActions').innerHTML=({dashboard:button('Novo lançamento'),transactions:button('Novo lançamento'),'general-expenses':button('Nova despesa'), 'fixed-costs':button('Novo custo fixo'), spending:'',commitments:'',cards:button('Novo cartão','new-card'),investments:button('Novo investimento','new-invest'),reports:button('Exportar CSV','export-csv','outline','download'),goals:button('Nova meta','new-goal'),data:'',profile:'',settings:''})[page];$('#pageContent').innerHTML=({dashboard:dashboard,transactions:transactions,'general-expenses':()=>expensePage('general'),'fixed-costs':()=>expensePage('fixed'),spending:spending,commitments:commitments,cards:cards,investments:investments,reports:reports,goals:goals,data:dataPage,profile:profilePage,settings:settings})[page]();applyPrivacy()}
+
 const kpi=(label,value,icon,sub='',cls='')=>`<div class="card kpi"><div class="label">${label}<i data-lucide="${icon}"></i></div><div class="value ${cls}">${value}</div><div class="sub">${sub}</div></div>`;
+
 function stats(){let x=totals();return `<div class="kpis">${kpi('Saldo do período',fmt(x.balance),'wallet','Receitas − despesas pagas',x.balance<0?'negative':'')}${kpi('Receitas',fmt(x.income),'trending-up','Entradas lançadas','positive')}${kpi('Despesas pagas',fmt(x.expenses),'trending-down','Inclui faturas pagas','negative')}${kpi('Compras no cartão',fmt(x.cardBills),'credit-card','Valor nas faturas do período')}</div>`}
+
 function monthly(m){const income=sum(entries().filter(e=>e.kind==='income'&&ym(e.date)===m));return {income,expenses:sum(cashExpenses(m))}}
+
 function graph(){const ms=Array.from({length:6},(_,i)=>ym(monthShift(`${month}-01`,i-5))), vals=ms.map(monthly),max=Math.max(1,...vals.flatMap(x=>[x.income,x.expenses]));return `<div class="chart">${vals.map((v,i)=>`<div class="chart-column" title="${esc(monthTitle(ms[i]))}: ${fmt(v.income)} receitas, ${fmt(v.expenses)} despesas"><div class="bar in" style="height:${v.income/max*100}%"></div><div class="bar out" style="height:${v.expenses/max*100}%"></div><span>${new Date(ms[i]+'-02').toLocaleDateString('pt-BR',{month:'short'}).replace('.','')}</span></div>`).join('')}</div><div class="legend"><span><i class="dot"></i>Receitas</span><span><i class="dot gray"></i>Despesas pagas</span></div>`}
+
 function spendingGroups(){const map={};currentExpenses().forEach(e=>{const k=e.category||'Outros';map[k]=(map[k]||0)+Number(e.amount)});return Object.entries(map).sort((a,b)=>b[1]-a[1])}
+
 function byCategory(){const sorted=spendingGroups();if(!sorted.length)return'<div class="empty">Nenhum gasto pago no período.</div>';const max=sorted[0][1];return sorted.slice(0,8).map(([name,v])=>`<div class="category-line"><div class="category-label"><span>${esc(name)}</span><b>${fmt(v)}</b></div><div class="progress"><div style="width:${v/max*100}%"></div></div></div>`).join('')}
+
 function spending(){const rows=spendingGroups(),total=sum(currentExpenses());const palette=['#0F766E','#115E59','#5EEAD4','#99F6E4','#78716C','#A8A29E','#D6D3D1','#2563EB'];let progress=0;const stops=rows.map(([k,v],i)=>{const angle=v/Math.max(total,.01)*100;const x=`${palette[i%palette.length]} ${progress.toFixed(2)}% ${(progress+angle).toFixed(2)}%`;progress+=angle;return x});const donut=rows.length?`<div class="donut" role="img" aria-label="Distribuição percentual dos gastos" style="background:conic-gradient(${stops.join(',')})"><span>${fmt(total)}<small>Despesas pagas</small></span></div>`:'<div class="empty">Sem despesas pagas neste período.</div>';return `<div class="card panel"><div class="panel-title"><h2>Onde estão seus gastos?</h2><small>Regime de caixa · ${scope==='month'?esc(monthTitle(month)):'Todos os períodos'}</small></div><div class="spending-layout">${donut}<div>${byCategory()}</div></div></div><div class="card panel" style="margin-top:20px"><div class="panel-title"><h2>Tabela por categoria</h2><small>Inclui compras no cartão somente após o pagamento da fatura</small></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Categoria</th><th class="right">Valor</th><th class="right">Participação</th></tr></thead><tbody>${rows.map(([c,v])=>`<tr><td>${esc(c)}</td><td class="right">${fmt(v)}</td><td class="right">${total?(v/total*100).toFixed(1):0}%</td></tr>`).join('')||'<tr><td colspan="3" class="empty">Nenhum gasto no período.</td></tr>'}<tr><td><b>Total</b></td><td class="right"><b>${fmt(total)}</b></td><td class="right">100%</td></tr></tbody></table></div></div>`}
+
 function expensePage(type){const arr=currentExpenses().filter(e=>expenseGroup(e)===type).sort((a,b)=>b.date.localeCompare(a.date));const total=sum(arr);return `${kpi(type==='fixed'?'Custos fixos pagos':'Despesas gerais pagas',fmt(total),'receipt','Por data efetiva de pagamento')}<div class="card panel" style="margin-top:20px"><div class="panel-title"><h2>${arr.length} movimentações</h2><small>Valores pagos no período · faturas aparecem na data de pagamento</small></div>${txTable(arr)}</div>`}
 
+ 
+
 function dashboard(){let rec=filtered(entries()).slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,7);return `${stats()}<div class="dashboard-grid"><div class="card panel"><div class="panel-title"><h2>Fluxo de caixa</h2><small>Últimos 6 meses</small></div>${graph()}</div><div class="card panel"><div class="panel-title"><h2>Despesas por categoria</h2><small>${scope==='month'?monthTitle(month):'Todos os períodos'}</small></div>${byCategory()}</div></div><div class="card panel"><div class="panel-title"><h2>Movimentações recentes</h2><button class="btn outline" data-action="go-transactions">Ver todas</button></div>${txTable(rec)}</div>`}
+
 function txTable(arr){if(!arr.length)return'<div class="empty">Nenhuma movimentação neste período.</div>';return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Descrição</th><th>Categoria</th><th>Data</th><th>Forma</th><th class="right">Valor</th><th></th></tr></thead><tbody>${arr.map(t=>`<tr><td><span class="type-icon"><i data-lucide="${t.kind==='income'?'arrow-down-left':'arrow-up-right'}"></i></span><b>${esc(t.description)}</b>${t.part?` <small class="muted">${t.part}/${t.total}</small>`:''}</td><td><span class="pill">${esc(t.category||'Outros')}</span></td><td>${new Date(t.date+'T12:00:00').toLocaleDateString('pt-BR')}</td><td>${t.isCard?'Cartão':t.repeat==='monthly'?'Recorrente':'Conta'}</td><td class="right ${t.kind==='income'?'positive':'negative'}"><b>${t.kind==='income'?'+':'−'} ${fmt(t.amount)}</b></td><td><button class="cell-action" title="Editar lançamento original" data-action="edit-tx" data-id="${esc(t.originId)}"><i data-lucide="pencil"></i></button><button class="cell-action" title="Excluir lançamento original" data-action="delete-tx" data-id="${esc(t.originId)}"><i data-lucide="trash-2"></i></button></td></tr>`).join('')}</tbody></table></div>`}
+
 function transactions(){const all=filtered(entries()).sort((a,b)=>b.date.localeCompare(a.date));return `<div class="card panel"><div class="panel-title"><h2>${all.length} lançamentos</h2><small>Parcelamentos aparecem em meses futuros</small></div>${txTable(all)}</div>`}
+
 function invoices(){return db.cards.flatMap(c=>{let ms=new Set([month]);entries().filter(e=>e.isCard&&e.cardId===c.id).forEach(e=>ms.add(e.invoiceMonth));return [...ms].sort().map(m=>({card:c,month:m,value:sum(entries().filter(e=>e.isCard&&e.cardId===c.id&&e.invoiceMonth===m)),paid:paid(c.id,m)}))}).filter(i=>i.value>0&&(scope==='all'||i.month===month)).sort((a,b)=>a.month.localeCompare(b.month))}
-function cards(){const ins=invoices();return `<div class="card-list">${db.cards.map(c=>`<div class="credit-container"><div class="credit-visual"><div class="upper">${esc(c.name)} <i data-lucide="wifi"></i></div><div class="number">•••• &nbsp; •••• &nbsp; ${esc(c.last4||'••••')}</div><div class="footer"><span>Fecha dia ${c.closingDay}</span><span>Vence dia ${c.dueDay}</span></div></div><div class="credit-info"><span>Limite: ${fmt(c.limit)}</span><span><button class="cell-action" data-action="edit-card" data-id="${esc(c.id)}" title="Editar"><i data-lucide="pencil"></i></button><button class="cell-action" data-action="delete-card" data-id="${esc(c.id)}" title="Excluir"><i data-lucide="trash-2"></i></button></span></div></div>`).join('')||'<div class="card panel empty">Cadastre um cartão para começar.</div>'}</div><div class="card panel"><div class="panel-title"><h2>Faturas ${scope==='month'?'do mês':'projetadas'}</h2>${button('Nova compra','new-card-expense','outline','plus')}</div><div class="table-wrap"><table class="data-table"><thead><tr><th>Cartão</th><th>Fatura</th><th>Vencimento</th><th class="right">Valor</th><th>Status / pagamento</th><th>Ação</th></tr></thead><tbody>${ins.map(i=>`<tr><td><b>${esc(i.card.name)}</b></td><td>${esc(monthTitle(i.month))}</td><td>${new Date(dueFor(i.card,i.month)+'T12:00:00').toLocaleDateString('pt-BR')}</td><td class="right"><b>${fmt(i.value)}</b></td><td><span class="pill ${i.paid?'paid':'pending'}">${i.paid?'Paga em '+new Date(paymentDate(i.card.id,i.month)+'T12:00:00').toLocaleDateString('pt-BR'):'Em aberto'}</span></td><td><button class="btn outline" data-action="toggle-paid" data-id="${esc(i.card.id)}" data-month="${esc(i.month)}">${i.paid?'Desmarcar':'Marcar paga'}</button></td></tr>`).join('')||'<tr><td colspan="6" class="empty">Nenhuma fatura neste período.</td></tr>'}</tbody></table></div><p class="helper">Compras feitas no dia do fechamento ou depois entram na fatura seguinte. O pagamento da fatura é contabilizado na data efetiva informada ao marcar como paga. Faturas antigas marcadas como pagas sem data usam o vencimento estimado até serem remarcadas.</p></div><div class="card panel" style="margin-top:20px"><div class="panel-title"><h2>Compras registradas nos cartões</h2><small>Edite a compra original para atualizar todas as parcelas futuras</small></div>${txTable(filtered(entries().filter(e=>e.isCard),'invoiceMonth').sort((a,b)=>b.date.localeCompare(a.date)))}</div>`}
+
+function allCardInvoices(){
+
+  const cardEntries=entries().filter(e=>e.isCard);
+
+  return db.cards.flatMap(card=>{
+
+    const months=[...new Set(cardEntries.filter(e=>e.cardId===card.id).map(e=>e.invoiceMonth))].sort();
+
+    return months.map(m=>({card,month:m,due:dueFor(card,m),value:sum(cardEntries.filter(e=>e.cardId===card.id&&e.invoiceMonth===m)),paymentDate:paymentDate(card.id,m)}));
+
+  }).filter(x=>x.value>0).sort((a,b)=>a.due.localeCompare(b.due));
+
+}
+
+function commitments(){
+
+  const pending=allCardInvoices().filter(i=>!i.paymentDate);
+
+  const amount=sum(pending,'value');
+
+  const grouped=new Map();
+
+  pending.forEach(i=>{const m=ym(i.due);if(!grouped.has(m))grouped.set(m,[]);grouped.get(m).push(i)});
+
+  const groups=[...grouped.entries()].sort(([a],[b])=>a.localeCompare(b));
+
+  const table=groups.map(([m,items])=>`<tr><td><b>${esc(monthTitle(m))}</b></td><td class="right"><b>${fmt(sum(items,'value'))}</b></td><td>${items.map(i=>`${esc(i.card.name)} (${esc(monthTitle(i.month))})`).join(', ')}</td></tr>`).join('');
+
+  const rows=pending.map(i=>`<tr><td>${esc(i.card.name)}</td><td>${esc(monthTitle(i.month))}</td><td>${new Date(i.due+'T12:00:00').toLocaleDateString('pt-BR')}</td><td class="right"><b>${fmt(i.value)}</b></td><td><span class="pill pending">Em aberto</span></td><td><button class="btn outline" data-action="toggle-paid" data-id="${esc(i.card.id)}" data-month="${esc(i.month)}">Registrar pagamento</button></td></tr>`).join('');
+
+  return `${kpi('Total comprometido',fmt(amount),'calendar-clock','Somente faturas ainda não pagas')}
+
+  <div class="card panel" style="margin-top:20px"><div class="panel-title"><h2>Projeção por mês de vencimento</h2><small>Não altera o saldo realizado</small></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Mês previsto</th><th class="right">A pagar</th><th>Cartões / faturas</th></tr></thead><tbody>${table||'<tr><td colspan="3" class="empty">Nenhum compromisso pendente.</td></tr>'}</tbody></table></div></div>
+
+  <div class="card panel" style="margin-top:20px"><div class="panel-title"><h2>Faturas em aberto</h2><small>Registre o pagamento na data em que realmente aconteceu</small></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Cartão</th><th>Fatura</th><th>Vencimento</th><th class="right">Valor</th><th>Status</th><th>Ação</th></tr></thead><tbody>${rows||'<tr><td colspan="6" class="empty">Nenhuma fatura pendente.</td></tr>'}</tbody></table></div></div><p class="helper">Valores projetados são compromissos, não despesas realizadas. Faturas pagas entram no fluxo de caixa pela data efetiva do pagamento, inclusive quando diferente do vencimento.</p>`;
+
+}
+
+function cards(){const ins=invoices();return `<div class="card-list">${db.cards.map(c=>`<div class="credit-container"><div class="credit-visual"><div class="upper">${esc(c.name)} <i data-lucide="wifi"></i></div><div class="number">•••• &nbsp; •••• &nbsp; ${esc(c.last4||'••••')}</div><div class="footer"><span>Fecha dia ${c.closingDay}</span><span>Vence dia ${c.dueDay}</span></div></div><div class="credit-info"><span>Limite: ${fmt(c.limit)}</span><span><button class="cell-action" data-action="edit-card" data-id="${esc(c.id)}" title="Editar"><i data-lucide="pencil"></i></button><button class="cell-action" data-action="delete-card" data-id="${esc(c.id)}" title="Excluir"><i data-lucide="trash-2"></i></button></span></div></div>`).join('')||'<div class="card panel empty">Cadastre um cartão para começar.</div>'}</div><div class="card panel"><div class="panel-title"><h2>Faturas ${scope==='month'?'do mês':'projetadas'}</h2>${button('Nova compra','new-card-expense','outline','plus')}</div><div class="table-wrap"><table class="data-table"><thead><tr><th>Cartão</th><th>Fatura</th><th>Vencimento</th><th class="right">Valor</th><th>Status / pagamento</th><th>Ação</th></tr></thead><tbody>${ins.map(i=>`<tr><td><b>${esc(i.card.name)}</b></td><td>${esc(monthTitle(i.month))}</td><td>${new Date(dueFor(i.card,i.month)+'T12:00:00').toLocaleDateString('pt-BR')}</td><td class="right"><b>${fmt(i.value)}</b></td><td><span class="pill ${i.paid?'paid':'pending'}">${i.paid?'Paga em '+new Date(paymentDate(i.card.id,i.month)+'T12:00:00').toLocaleDateString('pt-BR'):'Em aberto'}</span></td><td><button class="btn outline" data-action="toggle-paid" data-id="${esc(i.card.id)}" data-month="${esc(i.month)}">${i.paid?'Desmarcar':'Marcar paga'}</button>${i.paid?` <button class="btn outline" data-action="edit-payment" data-id="${esc(i.card.id)}" data-month="${esc(i.month)}">Editar data</button>`:''}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">Nenhuma fatura neste período.</td></tr>'}</tbody></table></div><p class="helper">Compras feitas no dia do fechamento ou depois entram na fatura seguinte. O pagamento da fatura é contabilizado na data efetiva informada ao marcar como paga. Faturas antigas marcadas como pagas sem data usam o vencimento estimado até serem remarcadas.</p></div><div class="card panel" style="margin-top:20px"><div class="panel-title"><h2>Compras registradas nos cartões</h2><small>Edite a compra original para atualizar todas as parcelas futuras</small></div>${txTable(filtered(entries().filter(e=>e.isCard),'invoiceMonth').sort((a,b)=>b.date.localeCompare(a.date)))}</div>`}
+
 function investmentSnapshot(i,m){const h=Array.isArray(i.history)&&i.history.length?i.history:[{date:i.date||today(),invested:+i.invested||0,balance:+i.balance||0}];const end=m+'-31';return h.filter(x=>x.date<=end).sort((a,b)=>a.date.localeCompare(b.date)).at(-1)||null}
+
 function investments(){const arr=db.investments,total=sum(arr,'balance');const ms=Array.from({length:12},(_,j)=>ym(monthShift(month+'-01',j-11)));const values=ms.map(m=>sum(arr.map(i=>({amount:investmentSnapshot(i,m)?.balance||0}))));const maxi=Math.max(1,...values);return `${kpi('Patrimônio investido',fmt(total),'landmark','Valor atualizado manualmente')}<div class="card panel" style="margin-top:18px"><div class="panel-title"><h2>Evolução dos investimentos</h2><small>Histórico das avaliações registradas · 12 meses</small></div><div class="chart">${ms.map((m,j)=>`<div class="chart-column" title="${esc(monthTitle(m))}: ${fmt(values[j])}"><div class="bar in" style="height:${values[j]/maxi*100}%"></div><span>${m.slice(5)}</span></div>`).join('')}</div><p class="helper">Os valores só mudam quando você registra uma nova avaliação. Sem dados históricos, não estimamos rentabilidade passada.</p></div><div class="card panel" style="margin-top:18px"><div class="panel-title"><h2>Minha carteira</h2><small>Edite um ativo para registrar uma nova avaliação com data</small></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Ativo</th><th>Tipo</th><th>Data do registro</th><th>Aplicado</th><th class="right">Valor atual</th><th class="right">Resultado</th><th></th></tr></thead><tbody>${arr.map(i=>`<tr><td><b>${esc(i.name)}</b></td><td>${esc(i.category)}</td><td>${esc(i.date||'Não informado')}</td><td>${fmt(i.invested)}</td><td class="right">${fmt(i.balance)}</td><td class="right ${i.balance-i.invested>=0?'positive':'negative'}">${fmt(i.balance-i.invested)}</td><td><button class="cell-action" data-action="edit-invest" data-id="${esc(i.id)}" title="Nova avaliação"><i data-lucide="pencil"></i></button><button class="cell-action" data-action="delete-invest" data-id="${esc(i.id)}"><i data-lucide="trash-2"></i></button></td></tr>`).join('')||'<tr><td colspan="7" class="empty">Nenhum investimento cadastrado.</td></tr>'}</tbody></table></div><p class="helper">Investimentos são patrimônio, não receita de caixa. Atualizar o valor do ativo não cria uma receita ou despesa automaticamente.</p></div>`}
 
+ 
+
 function reports(){const months=Array.from({length:12},(_,i)=>ym(monthShift(month+'-01',i-11)));return `<div class="card panel"><div class="panel-title"><h2>Evolução financeira</h2><small>Receitas e despesas pagas</small></div>${graph()}</div><div class="card panel" style="margin-top:20px"><div class="panel-title"><h2>Resultado por mês</h2></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Mês</th><th class="right">Receitas</th><th class="right">Despesas</th><th class="right">Resultado</th></tr></thead><tbody>${months.map(m=>{const v=monthly(m);return `<tr><td>${esc(monthTitle(m))}</td><td class="right positive">${fmt(v.income)}</td><td class="right negative">${fmt(v.expenses)}</td><td class="right"><b>${fmt(v.income-v.expenses)}</b></td></tr>`}).join('')}</tbody></table></div></div><div class="card panel" style="margin-top:20px"><div class="panel-title"><h2>Distribuição de despesas</h2></div>${byCategory()}</div>`}
+
 function goals(){return `<div class="card-list">${db.goals.map(g=>{let p=+g.target?Math.min(100,+g.current/+g.target*100):0;return `<div class="card panel"><div class="panel-title"><h2>${esc(g.name)}</h2><div><button class="cell-action" data-action="edit-goal" data-id="${esc(g.id)}"><i data-lucide="pencil"></i></button><button class="cell-action" data-action="delete-goal" data-id="${esc(g.id)}"><i data-lucide="trash-2"></i></button></div></div><div style="font-size:23px;font-weight:600">${fmt(g.current)} <span class="muted" style="font-size:13px">/ ${fmt(g.target)}</span></div><div class="progress" style="margin:15px 0"><div style="width:${p}%"></div></div><span class="helper">${p.toFixed(0)}% da meta ${g.deadline?' · Até '+new Date(g.deadline+'T12:00:00').toLocaleDateString('pt-BR'):''}</span></div>`}).join('')||'<div class="card panel empty">Crie sua primeira meta financeira.</div>'}</div>`}
+
 function dataPage(){return `<div class="settings-grid"><div class="card setting-card"><h2>Backup completo</h2><p>Baixe todos os cartões, lançamentos, faturas pagas, investimentos e metas como arquivo JSON.</p>${button('Baixar backup JSON','backup','primary','download')}</div><div class="card setting-card"><h2>Restaurar backup</h2><p>Restaure seus dados de um arquivo JSON exportado pelo Controle Financeiro James e Bruna. Substitui os dados existentes.</p><input type="file" accept=".json,application/json" id="restoreFile" class="field">${button('Restaurar backup','restore','outline','upload')}</div><div class="card setting-card"><h2>Planilha de importação</h2><p>Baixe um modelo CSV para Excel ou Google Sheets. Preencha, salve em CSV UTF-8 e importe aqui.</p>${button('Baixar planilha modelo','template','outline','file-down')}</div><div class="card setting-card"><h2>Importar CSV</h2><p>Importe lançamentos da planilha no formato do modelo. As parcelas são projetadas automaticamente.</p><input type="file" accept=".csv,text/csv" id="csvFile" class="field">${button('Importar lançamentos','import-csv','primary','upload')}</div><div class="card setting-card"><h2>Exportar lançamentos</h2><p>Exporte registros originais para abrir e editar no Excel ou Google Sheets.</p>${button('Exportar CSV','export-csv','outline','download')}</div></div><p class="note" style="margin-top:20px">Importante: o CSV importa apenas lançamentos. O JSON é o formato de backup integral. Faça backups periódicos, inclusive se usar sincronização online.</p>`}
+
 function profilePage(){const info=profileInfo();return `<form id="profileForm" class="card profile-form"><h2>Informações pessoais</h2><p class="profile-note">Seu nome aparecerá no menu e no canto superior da página. ${cloud?'As informações são sincronizadas na sua conta Supabase.':'No modo demonstração, estas informações ficam neste navegador.'}</p><div class="field-row"><label>Nome completo<input name="full_name" maxlength="100" autocomplete="name" required value="${esc(info.full_name||'')}" placeholder="Seu nome"></label><label>Como prefere ser chamado(a)<input name="display_name" maxlength="50" value="${esc(info.display_name||'')}" placeholder="Apelido (opcional)"></label></div><label>E-mail de acesso<input type="email" readonly value="${esc(user?.email||'Modo demonstração')}"></label><label>Observações sobre o perfil (opcional)<textarea name="notes" maxlength="500" placeholder="Informações que deseja guardar neste perfil">${esc(info.notes||'')}</textarea></label><button class="btn primary" type="submit"><i data-lucide="save"></i>Salvar alterações</button><p id="profileFeedback" role="status" class="helper"></p></form>`}
+
 $('#pageContent').addEventListener('submit',async e=>{if(e.target.id!=='profileForm')return;e.preventDefault();const form=e.target,btn=form.querySelector('button[type=submit]');const f=new FormData(form);const profile={full_name:String(f.get('full_name')||'').trim(),display_name:String(f.get('display_name')||'').trim(),notes:String(f.get('notes')||'').trim()};if(!profile.full_name){form.querySelector('#profileFeedback').textContent='Informe seu nome.';return}btn.disabled=true;try{if(cloud){const {data,error}=await client.auth.updateUser({data:profile});if(error)throw error;user=data.user||user}else localStorage.setItem('james_bruna_profile',JSON.stringify(profile));updateProfileHeader();form.querySelector('#profileFeedback').textContent='Perfil atualizado com sucesso.';notify('Perfil salvo.')}catch(err){form.querySelector('#profileFeedback').textContent='Erro ao salvar perfil: '+err.message}finally{btn.disabled=false}});
+
 function settings(){return `<div class="settings-grid"><div class="card setting-card"><h2>Preferências</h2><p>Moeda: real brasileiro (BRL). Idioma: português (Brasil).</p><button class="btn outline" data-action="theme"><i data-lucide="moon"></i>Alternar modo escuro</button></div><div class="card setting-card"><h2>Armazenamento</h2><p>${cloud?'Dados salvos na nuvem na conta autenticada com Supabase.':'Dados salvos apenas neste navegador, sem autenticação e sem sincronização.'}</p>${button('Baixar meus dados','backup','outline','download')}</div><div class="card setting-card"><h2>Limpar todos os dados</h2><p>Exclui permanentemente os dados deste espaço. Faça backup antes.</p>${button('Apagar dados','wipe','outline','trash-2')}</div></div>`}
+
 const field=(name,label,type='text',value='',extras='')=>`<label>${label}<input name="${name}" type="${type}" value="${esc(value)}" ${extras}></label>`;
+
 const sel=(name,label,opts,v)=>`<label>${label}<select name="${name}">${opts.map(([value,title])=>`<option value="${esc(value)}" ${String(value)===String(v)?'selected':''}>${esc(title)}</option>`).join('')}</select></label>`;
+
 const categories=['Moradia','Alimentação','Transporte','Saúde','Educação','Lazer','Assinaturas','Compras','Viagens','Salário','Freelance','Rendimentos','Outros'].map(v=>[v,v]);
+
 function openForm(type,id=null,cardDefault=null){modalType=type;editing=id;const record=(type==='tx'?db.transactions:type==='card'?db.cards:type==='invest'?db.investments:db.goals).find(x=>x.id===id)||{};$('#modalTitle').textContent=(id?'Editar ':'Novo ')+({tx:'lançamento',card:'cartão',invest:'investimento',goal:'meta'})[type];let html='';if(type==='tx'){html=sel('kind','Tipo',[['expense','Despesa'],['income','Receita']],record.kind||'expense')+field('description','Descrição','text',record.description||'','required maxlength="140"')+`<div class="field-row">${field('amount','Valor total (R$)','number',record.amount??'','required min="0.01" step="0.01"')}${field('date','Data','date',record.date||today(),'required')}</div>`+sel('category','Categoria',categories,record.category||'Outros')+sel('expenseType','Classificação da despesa',[['general','Despesa geral'],['fixed','Custo fixo']],record.expenseType||(page==='fixed-costs'?'fixed':'general'))+sel('cardId','Forma de pagamento',[['','Conta / dinheiro'],...db.cards.map(c=>[c.id,c.name])],record.cardId||cardDefault||'')+`<div class="field-row">${field('installments','Parcelas (cartão)','number',record.installments||1,'min="1" max="240"')}${sel('repeat','Recorrência',[['none','Não repetir'],['monthly','Mensal (até 10 anos)']],record.repeat||'none')}</div><div id="installmentPreview" class="installment-preview" role="status" aria-live="polite"></div><p class="helper">Parcelamentos no cartão são divididos pelo valor total, com ajustes de centavos na última parcela. Lançamentos recorrentes não podem ser feitos no cartão.</p>${id?'<p class="edit-warning">A edição altera o lançamento original e recalcula todas as parcelas, inclusive as vinculadas a faturas já pagas. Confira os valores após salvar.</p>':''}`}else if(type==='card'){html=field('name','Nome do cartão','text',record.name||'','required')+field('last4','Últimos 4 dígitos (opcional)','text',record.last4||'','maxlength="4" pattern="[0-9]{4}"')+`<div class="field-row">${field('closingDay','Dia de fechamento','number',record.closingDay||10,'required min="1" max="28"')}${field('dueDay','Dia de vencimento','number',record.dueDay||17,'required min="1" max="28"')}</div>`+field('limit','Limite do cartão (R$)','number',record.limit||0,'min="0" step="0.01"')}else if(type==='invest'){html=field('name','Nome do ativo','text',record.name||'','required')+sel('category','Classe',[['Renda fixa','Renda fixa'],['Ações','Ações'],['Fundos','Fundos'],['FIIs','FIIs'],['Previdência','Previdência'],['Criptoativos','Criptoativos'],['Outros','Outros']],record.category||'Renda fixa')+field('date','Data da aplicação / avaliação','date',record.date||today(),'required')+`<div class="field-row">${field('invested','Valor aplicado','number',record.invested||0,'required min="0" step="0.01"')}${field('balance','Valor atual','number',record.balance||0,'required min="0" step="0.01"')}</div>`}else{html=field('name','Nome da meta','text',record.name||'','required')+`<div class="field-row">${field('target','Valor da meta','number',record.target||0,'required min="0.01" step="0.01"')}${field('current','Valor acumulado','number',record.current||0,'required min="0" step="0.01"')}</div>`+field('deadline','Prazo (opcional)','date',record.deadline||'')}$('#formFields').innerHTML=html;if(type==='tx')updateInstallmentPreview();$('#modal').showModal()}
+
 function updateInstallmentPreview(){
+
  const form=$('#entryForm'),preview=$('#installmentPreview');if(!preview)return;
+
  const kind=form.querySelector('[name="kind"]')?.value,card=form.querySelector('[name="cardId"]')?.value;
+
  const amountInput=form.querySelector('[name="amount"]'),amount=Number(amountInput?.value||0);
+
  const nInput=form.querySelector('[name="installments"]');const requested=Number(nInput?.value||1);const validCount=Number.isInteger(requested)&&requested>=1&&requested<=240;
+
  const count=(kind==='expense'&&card)?requested:1;
+
  if(!Number.isFinite(amount)||amount<=0||!validCount){preview.innerHTML='<span>Informe um valor positivo e de 1 a 240 parcelas para visualizar a projeção.</span>';return}
+
  const total=Math.round(amount*100)/100;
+
  const first=partValue(total,count,0),last=partValue(total,count,count-1);
+
  const cardName=card?db.cards.find(c=>c.id===card)?.name||'Cartão':'Conta / dinheiro';
+
  preview.innerHTML=`<div class="preview-title"><i data-lucide="calculator"></i> Prévia antes de salvar</div><div class="preview-grid"><div><small>Valor total</small><strong>${fmt(total)}</strong></div><div><small>Quantidade</small><strong>${count} ${count===1?'lançamento':'parcelas'}</strong></div><div><small>Valor por parcela</small><strong>${fmt(first)}</strong></div></div>${count>1&&last!==first?`<p class="helper">Última parcela: ${fmt(last)} (ajuste de centavos).</p>`:''}<p class="helper">${esc(cardName)}. ${count>1?'As parcelas futuras serão projetadas automaticamente.':'O valor será registrado integralmente.'}</p>`;
+
  icons();
+
 }
+
 $('#entryForm').addEventListener('input',e=>{if(modalType==='tx')updateInstallmentPreview()});
+
 $('#entryForm').addEventListener('change',e=>{if(modalType==='tx')updateInstallmentPreview()});
+
 $('#closeModal').onclick=$('#cancelModal').onclick=()=>$('#modal').close();$('#modal').addEventListener('click',e=>{if(e.target===$('#modal'))$('#modal').close()});
+
 $('#entryForm').onsubmit=e=>{e.preventDefault();const f=Object.fromEntries(new FormData(e.currentTarget).entries()),obj={...f};if(modalType==='tx'){obj.amount=parseNum(obj.amount);if(!Number.isFinite(obj.amount)||obj.amount<=0){notify('Informe um valor maior que zero.');return}if(!Number.isInteger(Number(obj.installments))||+obj.installments<1||+obj.installments>240){notify('A quantidade deve ser de 1 a 240 parcelas.');return}obj.installments=+obj.installments;if(!obj.cardId)obj.installments=1;if(obj.kind==='income'){obj.cardId='';obj.installments=1}if(obj.cardId)obj.repeat='none';if(obj.repeat==='monthly'&&obj.cardId){notify('Recorrência não disponível para cartões.');return}}if(modalType==='card'){obj.closingDay=+obj.closingDay;obj.dueDay=+obj.dueDay;obj.limit=parseNum(obj.limit)}if(modalType==='invest'){obj.invested=parseNum(obj.invested);obj.balance=parseNum(obj.balance);if(!/^\d{4}-\d{2}-\d{2}$/.test(obj.date)){notify('Informe uma data válida.');return}const old=db.investments.find(x=>x.id===editing);const history=Array.isArray(old?.history)?old.history.slice():(old?[{date:old.date||today(),invested:+old.invested||0,balance:+old.balance||0}]:[]);const snapshot={date:obj.date,invested:obj.invested,balance:obj.balance};const at=history.findIndex(x=>x.date===obj.date);if(at>=0)history[at]=snapshot;else history.push(snapshot);obj.history=history.sort((a,b)=>a.date.localeCompare(b.date))}if(modalType==='goal'){obj.target=parseNum(obj.target);obj.current=parseNum(obj.current)}const table=({tx:'transactions',card:'cards',invest:'investments',goal:'goals'})[modalType];if(editing){const i=db[table].findIndex(x=>x.id===editing);if(i>=0)db[table][i]={...db[table][i],...obj}}else db[table].push({...obj,id:uid()});$('#modal').close();transact(()=>{});notify('Registro salvo com sucesso.')};
+
 function download(name,content,mime){const blob=new Blob([content],{type:mime}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1200)}
+
 const csvFields=['tipo','descricao','valor','data','categoria','cartao','parcelas','recorrencia'];const csvQuote=s=>'"'+String(s??'').replace(/"/g,'""')+'"';
+
 function makeCsv(rows){return '\uFEFF'+[csvFields,...rows].map(r=>r.map(csvQuote).join(';')).join('\r\n')}
+
 function parseCsv(text){text=text.replace(/^\uFEFF/,'');let rows=[],row=[],cur='',q=false;for(let i=0;i<text.length;i++){let c=text[i];if(c==='"'){if(q&&text[i+1]==='"'){cur+='"';i++}else q=!q}else if(c===';'&&!q){row.push(cur);cur=''}else if((c==='\n'||c==='\r')&&!q){if(c==='\r'&&text[i+1]==='\n')i++;row.push(cur);if(row.some(v=>v.trim()))rows.push(row);row=[];cur=''}else cur+=c}if(q)throw Error('CSV com aspas não fechadas');if(cur||row.length){row.push(cur);rows.push(row)}return rows}
+
 function csvImport(text){const rows=parseCsv(text),header=rows.shift()?.map(x=>x.trim().toLowerCase());if(!header||csvFields.some((v,i)=>header[i]!==v))throw Error('Cabeçalho inválido. Use a planilha modelo.');const add=[];for(let i=0;i<rows.length;i++){const [tipo,descricao,valor,data,categoria,cartao,parcelas,recorrencia]=rows[i].map(s=>(s||'').trim());let kind=tipo.toLowerCase();if(!['income','expense','receita','despesa'].includes(kind))throw Error('Linha '+(i+2)+': tipo inválido');kind=['income','receita'].includes(kind)?'income':'expense';const amount=parseNum(valor.replace(/\./g,'').replace(',','.'));const normalizedVal=/^\d+(\.\d+)?$/.test(valor)?Number(valor):amount;const date=/^\d{4}-\d{2}-\d{2}$/.test(data)?data:null;const card=db.cards.find(c=>c.name.toLowerCase()===cartao.toLowerCase());if(!descricao||!date||!Number.isFinite(normalizedVal)||normalizedVal<=0||(!Number.isInteger(+parcelas)&&parcelas)||(+parcelas>240)||(+parcelas<1&&parcelas)||cartao&&!card)throw Error('Linha '+(i+2)+': dados inválidos (cartão deve existir pelo nome).');let cardId=kind==='expense'&&card?card.id:'';add.push({id:uid(),kind,description:descricao,amount:normalizedVal,date,category:categoria||'Outros',cardId,installments:cardId?+parcelas||1:1,repeat:!cardId&&recorrencia==='monthly'?'monthly':'none'})}return add}
-$('#pageContent').addEventListener('click',async e=>{const b=e.target.closest('[data-action]');if(!b)return;const a=b.dataset.action,id=b.dataset.id;if(a==='new'||a==='new-card-expense')return openForm('tx',null,a==='new-card-expense'&&db.cards.length?db.cards[0].id:null);if(a==='new-card')return openForm('card');if(a==='new-invest')return openForm('invest');if(a==='new-goal')return openForm('goal');if(a.startsWith('edit-'))return openForm(({ 'edit-tx':'tx','edit-card':'card','edit-invest':'invest','edit-goal':'goal'})[a],id);if(a.startsWith('delete-')){const table=({'delete-tx':'transactions','delete-card':'cards','delete-invest':'investments','delete-goal':'goals'})[a];if(table==='cards'&&db.transactions.some(t=>t.cardId===id)){notify('Exclua ou altere primeiro as compras vinculadas ao cartão.');return}if(confirm('Excluir este registro?'))transact(()=>db[table]=db[table].filter(x=>x.id!==id));return}if(a==='toggle-paid'){transact(()=>{const k=`${id}_${b.dataset.month}`;if(db.paidInvoices[k]){delete db.paidInvoices[k]}else{const input=prompt('Data efetiva de pagamento (AAAA-MM-DD):',today());if(input===null)return;if(!/^\d{4}-\d{2}-\d{2}$/.test(input)||Number.isNaN(new Date(input+'T12:00:00').valueOf())){notify('Data inválida.');return}db.paidInvoices[k]=input}});notify('Status da fatura atualizado.');return}if(a==='go-transactions'){page='transactions';render();return}if(a==='theme')return $('#themeToggle').click();if(a==='backup'){download('controle-financeiro-james-e-bruna-backup-'+today()+'.json',JSON.stringify({app:'clara-financas',exportedAt:new Date().toISOString(),data:db},null,2),'application/json');return}if(a==='template'){download('controle-financeiro-modelo-importacao.csv',makeCsv([['despesa','Supermercado','250,90',today(),'Alimentação','','1','none'],['receita','Salário','4500,00',today(),'Salário','','1','monthly']]),'text/csv;charset=utf-8');return}if(a==='export-csv'){download('controle-financeiro-lancamentos-'+today()+'.csv',makeCsv(db.transactions.map(t=>[t.kind,t.description,String(t.amount).replace('.',','),t.date,t.category,db.cards.find(c=>c.id===t.cardId)?.name||'',t.installments||1,t.repeat||'none'])),'text/csv;charset=utf-8');return}if(a==='import-csv'){const file=$('#csvFile')?.files?.[0];if(!file){notify('Selecione um CSV.');return}try{const add=csvImport(await file.text());if(!add.length)throw Error('Planilha vazia');if(confirm(`Importar ${add.length} lançamentos?`)){transact(()=>db.transactions.push(...add));notify(`${add.length} lançamentos importados.`)}}catch(err){alert('Falha na importação: '+err.message)}return}if(a==='restore'){const file=$('#restoreFile')?.files?.[0];if(!file){notify('Selecione um backup JSON.');return}try{const obj=JSON.parse(await file.text());if(obj.app!=='clara-financas'||!valid(obj.data))throw Error('Arquivo incompatível');if(confirm('Isso substituirá TODOS os seus dados atuais. Continuar?')){transact(()=>db=structuredClone(obj.data));notify('Backup restaurado.')}}catch(err){alert('Falha ao restaurar: '+err.message)}return}if(a==='wipe'){if(confirm('Apagar TODOS os dados definitivamente?')&&confirm('Última confirmação: excluir todos os registros?')){transact(()=>db=empty());notify('Dados apagados.')}}});
+
+$('#pageContent').addEventListener('click',async e=>{const b=e.target.closest('[data-action]');if(!b)return;const a=b.dataset.action,id=b.dataset.id;if(a==='new'||a==='new-card-expense')return openForm('tx',null,a==='new-card-expense'&&db.cards.length?db.cards[0].id:null);if(a==='new-card')return openForm('card');if(a==='new-invest')return openForm('invest');if(a==='new-goal')return openForm('goal');if(a.startsWith('edit-'))return openForm(({ 'edit-tx':'tx','edit-card':'card','edit-invest':'invest','edit-goal':'goal'})[a],id);if(a.startsWith('delete-')){const table=({'delete-tx':'transactions','delete-card':'cards','delete-invest':'investments','delete-goal':'goals'})[a];if(table==='cards'&&db.transactions.some(t=>t.cardId===id)){notify('Exclua ou altere primeiro as compras vinculadas ao cartão.');return}if(confirm('Excluir este registro?'))transact(()=>db[table]=db[table].filter(x=>x.id!==id));return}if(a==='edit-payment'){
+
+  const key=`${id}_${b.dataset.month}`;
+
+  const previous=paymentDate(id,b.dataset.month);
+
+  if(!previous)return notify('Esta fatura ainda não foi paga.');
+
+  const next=prompt('Informe a DATA REAL do pagamento (AAAA-MM-DD):',previous);
+
+  if(next===null)return;
+
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(next)||Number.isNaN(new Date(next+'T12:00:00').valueOf()))return notify('Data inválida.');
+
+  transact(()=>{db.paidInvoices[key]=next});
+
+  notify('Data do pagamento atualizada.');return;
+
+} if(a==='toggle-paid'){transact(()=>{const k=`${id}_${b.dataset.month}`;if(db.paidInvoices[k]){delete db.paidInvoices[k]}else{const input=prompt('Data efetiva de pagamento (AAAA-MM-DD):',today());if(input===null)return;if(!/^\d{4}-\d{2}-\d{2}$/.test(input)||Number.isNaN(new Date(input+'T12:00:00').valueOf())){notify('Data inválida.');return}db.paidInvoices[k]=input}});notify('Status da fatura atualizado.');return}if(a==='go-transactions'){page='transactions';render();return}if(a==='theme')return $('#themeToggle').click();if(a==='backup'){download('controle-financeiro-james-e-bruna-backup-'+today()+'.json',JSON.stringify({app:'clara-financas',exportedAt:new Date().toISOString(),data:db},null,2),'application/json');return}if(a==='template'){download('controle-financeiro-modelo-importacao.csv',makeCsv([['despesa','Supermercado','250,90',today(),'Alimentação','','1','none'],['receita','Salário','4500,00',today(),'Salário','','1','monthly']]),'text/csv;charset=utf-8');return}if(a==='export-csv'){download('controle-financeiro-lancamentos-'+today()+'.csv',makeCsv(db.transactions.map(t=>[t.kind,t.description,String(t.amount).replace('.',','),t.date,t.category,db.cards.find(c=>c.id===t.cardId)?.name||'',t.installments||1,t.repeat||'none'])),'text/csv;charset=utf-8');return}if(a==='import-csv'){const file=$('#csvFile')?.files?.[0];if(!file){notify('Selecione um CSV.');return}try{const add=csvImport(await file.text());if(!add.length)throw Error('Planilha vazia');if(confirm(`Importar ${add.length} lançamentos?`)){transact(()=>db.transactions.push(...add));notify(`${add.length} lançamentos importados.`)}}catch(err){alert('Falha na importação: '+err.message)}return}if(a==='restore'){const file=$('#restoreFile')?.files?.[0];if(!file){notify('Selecione um backup JSON.');return}try{const obj=JSON.parse(await file.text());if(obj.app!=='clara-financas'||!valid(obj.data))throw Error('Arquivo incompatível');if(confirm('Isso substituirá TODOS os seus dados atuais. Continuar?')){transact(()=>db=structuredClone(obj.data));notify('Backup restaurado.')}}catch(err){alert('Falha ao restaurar: '+err.message)}return}if(a==='wipe'){if(confirm('Apagar TODOS os dados definitivamente?')&&confirm('Última confirmação: excluir todos os registros?')){transact(()=>db=empty());notify('Dados apagados.')}}});
+
 $('#pageActions').addEventListener('click',e=>{const a=e.target.closest('[data-action]')?.dataset.action;if(a==='new')openForm('tx');if(a==='new-card')openForm('card');if(a==='new-invest')openForm('invest');if(a==='new-goal')openForm('goal');if(a==='export-csv')download('controle-financeiro-lancamentos-'+today()+'.csv',makeCsv(db.transactions.map(t=>[t.kind,t.description,String(t.amount).replace('.',','),t.date,t.category,db.cards.find(c=>c.id===t.cardId)?.name||'',t.installments||1,t.repeat||'none'])),'text/csv;charset=utf-8')});
+
 init().catch(e=>{console.error(e);notify('Erro ao iniciar: '+e.message)})
+
 })();
