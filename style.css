@@ -82,3 +82,8 @@
 .category-item>span:last-child{display:flex;align-items:center;gap:6px}
 @media(max-width:790px){.invoice-summary{grid-template-columns:1fr 1fr}.invoice-actions{grid-column:1/-1;flex-direction:row;flex-wrap:wrap}.invoice-actions .btn{width:auto}.invoice-filter select{min-width:0;width:100%}}
 @media(max-width:460px){.invoice-summary{grid-template-columns:1fr}.invoice-actions{grid-column:auto}.category-item{flex-wrap:wrap}}
+
+/* Submenu para editar categorias no menu Ferramentas */
+.sidebar .category-submenu-label { font-size: 10px; letter-spacing: .08em; margin-top: 12px; opacity: .72; }
+.sidebar .category-submenu-link { padding-left: 24px; }
+.sidebar .category-submenu-link.active { font-weight: 600; }
