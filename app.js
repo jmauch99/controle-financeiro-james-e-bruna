@@ -53,11 +53,130 @@ $('#privacyToggle').addEventListener('click',()=>{
 const notify=s=>{const t=$('#toast');t.textContent=s;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3100)};
 const localKey='clara_financas_demo_v1';
 const stored=()=>{try{const d=JSON.parse(localStorage.getItem(localKey));return valid(d)?d:empty()}catch{return empty()}};
-function commit(){if(!cloud){localStorage.setItem(localKey,JSON.stringify(db));$('#syncStatus').textContent='Salvo neste navegador';return Promise.resolve()}$('#syncStatus').textContent='Salvando…';const snapshot=structuredClone(db);saving=saving.catch(()=>{}).then(async()=>{const {error}=await client.from('finance_data').upsert({user_id:user.id,payload:snapshot,updated_at:new Date().toISOString()},{onConflict:'user_id'});if(error)throw error;$('#syncStatus').textContent='Sincronizado'}).catch(e=>{$('#syncStatus').textContent='Erro ao salvar';notify('Falha na sincronização: '+e.message);throw e});return saving}
-const transact=fn=>{fn();render();commit().catch(()=>{})};
-async function init(){const conf=window.CLARA_CONFIG||{};cloud=!!(conf.supabaseUrl&&conf.supabasePublishableKey);if(cloud){if(!window.supabase){$('#auth').classList.remove('hidden');$('#authMessage').textContent='Não foi possível carregar a biblioteca de autenticação.';return}client=window.supabase.createClient(conf.supabaseUrl,conf.supabasePublishableKey);const {data}=await client.auth.getSession();if(data?.session){await enter(data.session.user)}else $('#auth').classList.remove('hidden');client.auth.onAuthStateChange((_event,session)=>{if(!session?.user&&user){user=null;$('#app').classList.add('hidden');$('#auth').classList.remove('hidden')}})}else{db=stored();$('#demoBanner').classList.remove('hidden');$('#logout').classList.add('hidden');enterUI('Demonstração local')}}
-async function enter(u){user=u;const {data,error}=await client.from('finance_data').select('payload').eq('user_id',u.id).maybeSingle();if(error){$('#auth').classList.remove('hidden');$('#authMessage').textContent='Erro ao buscar seus dados: '+error.message;return}db=valid(data?.payload)?data.payload:empty();if(!data)await commit().catch(()=>{});enterUI(u.email||'Minha conta')}
-function profileInfo(){return cloud?(user?.user_metadata||{}):JSON.parse(localStorage.getItem('james_bruna_profile')||'{}')}
+function commit() {
+  if (!cloud) {
+    localStorage.setItem(localKey, JSON.stringify(db));
+    $('#syncStatus').textContent = 'Salvo neste navegador';
+    return Promise.resolve();
+  }
+
+  $('#syncStatus').textContent = 'Salvando…';
+  const snapshot = structuredClone(db);
+
+  saving = saving.catch(() => {}).then(async () => {
+    const { error } = await client.from('finance_data').upsert({
+      user_id: user.id,
+      payload: snapshot,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id' });
+
+    if (error) throw error;
+    $('#syncStatus').textContent = 'Sincronizado';
+  }).catch(e => {
+    $('#syncStatus').textContent = 'Erro ao salvar';
+    notify('Falha na sincronização: ' + e.message);
+    throw e;
+  });
+
+  return saving;
+}
+
+const transact = fn => {
+  fn();
+  render();
+  commit().catch(() => {});
+};
+
+// INICIALIZAÇÃO CORRIGIDA DO SUPABASE
+async function init() {
+  const conf = window.CLARA_CONFIG || {};
+
+  // Remove caminhos incorretos da URL do projeto
+  const supabaseUrl = String(conf.supabaseUrl || '')
+    .trim()
+    .replace(/\/(?:rest|auth)\/v1\/?$/i, '')
+    .replace(/\/+$/, '');
+
+  const supabaseKey = String(
+    conf.supabasePublishableKey || ''
+  ).trim();
+
+  cloud = Boolean(supabaseUrl && supabaseKey);
+
+  if (cloud) {
+    if (!window.supabase) {
+      $('#auth').classList.remove('hidden');
+      $('#authMessage').textContent =
+        'Não foi possível carregar a biblioteca de autenticação.';
+      return;
+    }
+
+    // Usa somente a URL base do Supabase
+    client = window.supabase.createClient(
+      supabaseUrl,
+      supabaseKey
+    );
+
+    const { data, error } = await client.auth.getSession();
+
+    if (error) {
+      console.error('Erro ao recuperar sessão:', error.message);
+    }
+
+    if (data?.session) {
+      await enter(data.session.user);
+    } else {
+      $('#auth').classList.remove('hidden');
+    }
+
+    client.auth.onAuthStateChange((_event, session) => {
+      if (!session?.user && user) {
+        user = null;
+        $('#app').classList.add('hidden');
+        $('#auth').classList.remove('hidden');
+      }
+    });
+
+  } else {
+    db = stored();
+    $('#demoBanner').classList.remove('hidden');
+    $('#logout').classList.add('hidden');
+    enterUI('Demonstração local');
+  }
+}
+
+async function enter(u) {
+  user = u;
+
+  const { data, error } = await client
+    .from('finance_data')
+    .select('payload')
+    .eq('user_id', u.id)
+    .maybeSingle();
+
+  if (error) {
+    $('#auth').classList.remove('hidden');
+    $('#authMessage').textContent =
+      'Erro ao buscar seus dados: ' + error.message;
+    return;
+  }
+
+  db = valid(data?.payload) ? data.payload : empty();
+
+  if (!data) {
+    await commit().catch(() => {});
+  }
+
+  enterUI(u.email || 'Minha conta');
+}
+
+function profileInfo() {
+  return cloud
+    ? (user?.user_metadata || {})
+    : JSON.parse(
+        localStorage.getItem('james_bruna_profile') || '{}'
+      );
+}
 function updateProfileHeader(){const info=profileInfo(),name=(info.full_name||'').trim(),label=name||user?.email||'Demonstração local';$('#accountName').textContent=name||'Meu espaço';$('#accountLabel').textContent=user?.email||'Perfil local';const initials=(name||'F').split(/\s+/).map(s=>s[0]).slice(0,2).join('').toUpperCase();$('#sideAvatar').textContent=initials;$('#profileShortcut').textContent=initials;$('#profileShortcut').title='Editar perfil de '+label}
 function enterUI(name){$('#auth').classList.add('hidden');$('#app').classList.remove('hidden');updateProfileHeader();$('#month').value=month;render()}
 $('#profileShortcut').onclick=()=>{page='profile';render()};
