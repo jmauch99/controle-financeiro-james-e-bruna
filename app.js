@@ -73,7 +73,33 @@ $('#nav').addEventListener('click',navigate);$$('.sidebar nav').forEach(n=>n.add
 $('#filters').onclick=e=>{const b=e.target.closest('[data-scope]');if(!b)return;scope=b.dataset.scope;render()};$('#month').onchange=e=>{month=e.target.value||ym(today());render()};
 function entries(){const out=[];for(const t of db.transactions){if(t.kind==='expense'&&t.cardId){const parts=Math.max(1,+t.installments||1);for(let i=0;i<parts;i++)out.push({...t,id:`${t.id}:${i}`,originId:t.id,date:monthShift(t.date,i),amount:partValue(+t.amount,parts,i),part:i+1,total:parts,isCard:true,invoiceMonth:invoiceFor(t.cardId,monthShift(t.date,i))})}else if(t.repeat==='monthly'){for(let i=-60;i<=120;i++){const d=monthShift(t.date,i);if(i<0)continue;out.push({...t,id:`${t.id}:${i}`,originId:t.id,date:d,repeatInstance:true})}}else out.push({...t,originId:t.id})}return out}
 function partValue(total,n,i){const cents=Math.round(total*100),base=Math.floor(cents/n);return (base+(i===n-1?cents-base*n:0))/100}
-function invoiceFor(cardId,purchaseDate){const c=db.cards.find(c=>c.id===cardId);if(!c)return ym(purchaseDate);const [y,m,d]=purchaseDate.split('-').map(Number);let billing=ym(purchaseDate);if(d>=Number(c.closingDay))billing=ym(monthShift(`${y}-${String(m).padStart(2,'0')}-01`,1));return billing}
+// A compra realizada no DIA DO FECHAMENTO já entra na fatura do mês seguinte.
+// Ex.: fechamento 24: de 24/10 a 23/11 => fatura 11/2026.
+function invoiceFor(cardId, purchaseDate) {
+  const card = db.cards.find(c => c.id === cardId);
+  if (!card) return ym(purchaseDate);
+
+  const date = String(purchaseDate || '');
+  if (!/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(date)) {
+    throw new Error('Data da compra inválida: ' + date);
+  }
+
+  const [year, monthNumber, day] = date.split('-').map(Number);
+  const lastDay = new Date(year, monthNumber, 0).getDate();
+  if (day > lastDay) throw new Error('Data da compra inválida: ' + date);
+
+  const closingDay = Number(card.closingDay);
+  if (!Number.isInteger(closingDay) || closingDay < 1 || closingDay > 31) {
+    throw new Error('Configure um dia de fechamento válido para o cartão ' + card.name);
+  }
+
+  // Trata meses curtos caso um cartão antigo tenha fechamento em 29, 30 ou 31.
+  const effectiveClosingDay = Math.min(closingDay, lastDay);
+  const baseMonth = `${year}-${String(monthNumber).padStart(2, '0')}-01`;
+  return day >= effectiveClosingDay
+    ? ym(monthShift(baseMonth, 1))
+    : ym(baseMonth);
+}
 function dueFor(card,invoiceMonth){
   if(!card||!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(invoiceMonth)))return '';
   const [year,monthNumber]=invoiceMonth.split('-').map(Number);
