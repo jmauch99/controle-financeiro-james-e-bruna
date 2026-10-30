@@ -1,4 +1,4 @@
-*/
+/* Controle Financeiro James e Bruna — aplicação estática com opção de sincronização Supabase. */
 
 (()=>{'use strict';
 
@@ -146,7 +146,21 @@ function partValue(total,n,i){const cents=Math.round(total*100),base=Math.floor(
 
 function invoiceFor(cardId,purchaseDate){const c=db.cards.find(c=>c.id===cardId);if(!c)return ym(purchaseDate);const [y,m,d]=purchaseDate.split('-').map(Number);let billing=ym(purchaseDate);if(d>=Number(c.closingDay))billing=ym(monthShift(`${y}-${String(m).padStart(2,'0')}-01`,1));return billing}
 
-function dueFor(card,invoiceMonth){const d=+card.dueDay;const [y,m]=invoiceMonth.split('-').map(Number);const dueMonth=monthShift(`${invoiceMonth}-01`,1);const [dy,dm]=dueMonth.split('-').map(Number);const last=new Date(dy,dm,0).getDate();return `${dueMonth}-${String(Math.min(d,last)).padStart(2,'0')}`}
+function dueFor(card,invoiceMonth){
+
+  if(!card||!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(invoiceMonth)))return '';
+
+  const [year,monthNumber]=invoiceMonth.split('-').map(Number);
+
+  const dueDay=Number(card.dueDay);
+
+  if(!Number.isInteger(dueDay)||dueDay<1||dueDay>31)return '';
+
+  const lastDay=new Date(year,monthNumber,0).getDate();
+
+  return `${invoiceMonth}-${String(Math.min(dueDay,lastDay)).padStart(2,'0')}`;
+
+}
 
 function filtered(items,key='date'){return scope==='all'?items:items.filter(x=>ym(x[key])===month)};
 
@@ -238,7 +252,7 @@ function commitments(){
 
 }
 
-function cards(){const ins=invoices();return `<div class="card-list">${db.cards.map(c=>`<div class="credit-container"><div class="credit-visual"><div class="upper">${esc(c.name)} <i data-lucide="wifi"></i></div><div class="number">•••• &nbsp; •••• &nbsp; ${esc(c.last4||'••••')}</div><div class="footer"><span>Fecha dia ${c.closingDay}</span><span>Vence dia ${c.dueDay}</span></div></div><div class="credit-info"><span>Limite: ${fmt(c.limit)}</span><span><button class="cell-action" data-action="edit-card" data-id="${esc(c.id)}" title="Editar"><i data-lucide="pencil"></i></button><button class="cell-action" data-action="delete-card" data-id="${esc(c.id)}" title="Excluir"><i data-lucide="trash-2"></i></button></span></div></div>`).join('')||'<div class="card panel empty">Cadastre um cartão para começar.</div>'}</div><div class="card panel"><div class="panel-title"><h2>Faturas ${scope==='month'?'do mês':'projetadas'}</h2>${button('Nova compra','new-card-expense','outline','plus')}</div><div class="table-wrap"><table class="data-table"><thead><tr><th>Cartão</th><th>Fatura</th><th>Vencimento</th><th class="right">Valor</th><th>Status / pagamento</th><th>Ação</th></tr></thead><tbody>${ins.map(i=>`<tr><td><b>${esc(i.card.name)}</b></td><td>${esc(monthTitle(i.month))}</td><td>${new Date(dueFor(i.card,i.month)+'T12:00:00').toLocaleDateString('pt-BR')}</td><td class="right"><b>${fmt(i.value)}</b></td><td><span class="pill ${i.paid?'paid':'pending'}">${i.paid?'Paga em '+new Date(paymentDate(i.card.id,i.month)+'T12:00:00').toLocaleDateString('pt-BR'):'Em aberto'}</span></td><td><button class="btn outline" data-action="toggle-paid" data-id="${esc(i.card.id)}" data-month="${esc(i.month)}">${i.paid?'Desmarcar':'Marcar paga'}</button>${i.paid?` <button class="btn outline" data-action="edit-payment" data-id="${esc(i.card.id)}" data-month="${esc(i.month)}">Editar data</button>`:''}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">Nenhuma fatura neste período.</td></tr>'}</tbody></table></div><p class="helper">Compras feitas no dia do fechamento ou depois entram na fatura seguinte. O pagamento da fatura é contabilizado na data efetiva informada ao marcar como paga. Faturas antigas marcadas como pagas sem data usam o vencimento estimado até serem remarcadas.</p></div><div class="card panel" style="margin-top:20px"><div class="panel-title"><h2>Compras registradas nos cartões</h2><small>Edite a compra original para atualizar todas as parcelas futuras</small></div>${txTable(filtered(entries().filter(e=>e.isCard),'invoiceMonth').sort((a,b)=>b.date.localeCompare(a.date)))}</div>`}
+function cards(){const ins=invoices();return `<div class="card-list">${db.cards.map(c=>`<div class="credit-container"><div class="credit-visual"><div class="upper">${esc(c.name)} <i data-lucide="wifi"></i></div><div class="number">•••• &nbsp; •••• &nbsp; ${esc(c.last4||'••••')}</div><div class="footer"><span>Fecha dia ${c.closingDay}</span><span>Vence dia ${c.dueDay}</span></div></div><div class="credit-info"><span>Limite: ${fmt(c.limit)}</span><span><button class="cell-action" data-action="edit-card" data-id="${esc(c.id)}" title="Editar"><i data-lucide="pencil"></i></button><button class="cell-action" data-action="delete-card" data-id="${esc(c.id)}" title="Excluir"><i data-lucide="trash-2"></i></button></span></div></div>`).join('')||'<div class="card panel empty">Cadastre um cartão para começar.</div>'}</div><div class="card panel"><div class="panel-title"><h2>Faturas ${scope==='month'?'do mês':'projetadas'}</h2>${button('Nova compra','new-card-expense','outline','plus')}</div><div class="table-wrap"><table class="data-table"><thead><tr><th>Cartão</th><th>Fatura</th><th>Vencimento</th><th class="right">Valor</th><th>Status / pagamento</th><th>Ação</th></tr></thead><tbody>${ins.map(i=>`<tr><td><b>${esc(i.card.name)}</b></td><td>${esc(monthTitle(i.month))}</td><td>${(dueFor(i.card,i.month)?new Date(dueFor(i.card,i.month)+'T12:00:00').toLocaleDateString('pt-BR'):'Configure o vencimento')}</td><td class="right"><b>${fmt(i.value)}</b></td><td><span class="pill ${i.paid?'paid':'pending'}">${i.paid?'Paga em '+new Date(paymentDate(i.card.id,i.month)+'T12:00:00').toLocaleDateString('pt-BR'):'Em aberto'}</span></td><td><button class="btn outline" data-action="toggle-paid" data-id="${esc(i.card.id)}" data-month="${esc(i.month)}">${i.paid?'Desmarcar':'Marcar paga'}</button>${i.paid?` <button class="btn outline" data-action="edit-payment" data-id="${esc(i.card.id)}" data-month="${esc(i.month)}">Editar data</button>`:''}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">Nenhuma fatura neste período.</td></tr>'}</tbody></table></div><p class="helper">Compras feitas no dia do fechamento ou depois entram na fatura seguinte. O pagamento da fatura é contabilizado na data efetiva informada ao marcar como paga. Faturas antigas marcadas como pagas sem data usam o vencimento estimado até serem remarcadas.</p></div><div class="card panel" style="margin-top:20px"><div class="panel-title"><h2>Compras registradas nos cartões</h2><small>Edite a compra original para atualizar todas as parcelas futuras</small></div>${txTable(filtered(entries().filter(e=>e.isCard),'invoiceMonth').sort((a,b)=>b.date.localeCompare(a.date)))}</div>`}
 
 function investmentSnapshot(i,m){const h=Array.isArray(i.history)&&i.history.length?i.history:[{date:i.date||today(),invested:+i.invested||0,balance:+i.balance||0}];const end=m+'-31';return h.filter(x=>x.date<=end).sort((a,b)=>a.date.localeCompare(b.date)).at(-1)||null}
 
