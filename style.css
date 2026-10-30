@@ -19,3 +19,26 @@
 @media(max-width:720px){.brand{font-size:14px}.profile-form{padding:18px}}
 
 .spending-layout{display:grid;grid-template-columns:minmax(220px,360px) 1fr;align-items:center;gap:32px}.donut{width:min(280px,100%);aspect-ratio:1;border-radius:50%;display:grid;place-items:center;margin:auto}.donut span{background:var(--card);width:64%;aspect-ratio:1;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-size:18px;font-weight:600;padding:12px}.donut small{font-size:11px;font-weight:400;color:var(--muted)}@media(max-width:720px){.spending-layout{grid-template-columns:1fr}}
+
+/* v4 — modo privacidade, válido em todas as páginas */
+.privacy-toggle{border-radius:9px;min-width:34px;min-height:34px;transition:background .15s,color .15s}
+.privacy-toggle:hover,.privacy-toggle[aria-pressed="true"]{background:var(--soft);color:var(--brand)}
+.privacy-hidden #pageContent .data-table tbody td,
+.privacy-hidden #pageContent .credit-visual .number,
+.privacy-hidden #pageContent .credit-visual .upper,
+.privacy-hidden #pageContent .credit-info,
+.privacy-hidden #pageContent .chart,
+.privacy-hidden #pageContent canvas,
+.privacy-hidden #pageContent svg:not([data-lucide]),
+.privacy-hidden #pageContent .donut,
+.privacy-hidden #pageContent .category-line,
+.privacy-hidden #pageContent .progress,
+.privacy-hidden #pageContent .kpi .sub,
+.privacy-hidden #pageContent .card-list .credit-visual,
+.privacy-hidden #pageContent .investment-chart,
+.privacy-hidden #pageContent .invest-chart{filter:blur(5px)}
+.privacy-hidden #pageContent .data-table tbody td button{filter:none}
+.privacy-hidden #pageContent input[type="number"],
+.privacy-hidden #modal input[type="number"]{filter:blur(5px)}
+.privacy-hidden #pageContent .positive,
+.privacy-hidden #pageContent .negative{color:var(--muted)!important}

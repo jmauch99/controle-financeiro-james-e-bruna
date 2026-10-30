@@ -14,6 +14,42 @@ const empty=()=>({version:1,transactions:[],cards:[],investments:[],goals:[],pai
 const valid=d=>d&&typeof d==='object'&&Array.isArray(d.transactions)&&Array.isArray(d.cards)&&Array.isArray(d.investments)&&Array.isArray(d.goals)&&d.paidInvoices&&typeof d.paidInvoices==='object';
 let db=empty(),page='dashboard',scope='month',month=today().slice(0,7),client=null,user=null,cloud=false,saving=Promise.resolve(),modalType='',editing=null,toastTimer;
 const icons=()=>window.lucide?.createIcons({attrs:{'stroke-width':1.6}});
+// Privacidade visual: somente a renderização é mascarada. O banco e os backups não são modificados.
+let privacyHidden=sessionStorage.getItem('jb_privacy_hidden')==='1';
+const privacyOriginals=new WeakMap();
+function applyPrivacy(){
+  const root=$('#pageContent');
+  if(!root)return;
+  const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
+  let node;
+  while((node=walker.nextNode())){
+    if(node.parentElement?.closest('script,style,textarea,button,select,option'))continue;
+    if(privacyHidden){
+      if(privacyOriginals.has(node))continue;
+      const source=node.nodeValue;
+      const masked=source.replace(/(?:[+\-−]\s*)?R\$\s*-?\s*[\d.,]+/g,'R$ •••••').replace(/\b\d+(?:[.,]\d+)?%/g,'••%');
+      if(masked!==source){privacyOriginals.set(node,source);node.nodeValue=masked;}
+    } else if(privacyOriginals.has(node)){
+      node.nodeValue=privacyOriginals.get(node);
+      privacyOriginals.delete(node);
+    }
+  }
+  document.body.classList.toggle('privacy-hidden',privacyHidden);
+  const toggle=$('#privacyToggle');
+  if(toggle){
+    toggle.setAttribute('aria-pressed',String(privacyHidden));
+    toggle.setAttribute('aria-label',privacyHidden?'Mostrar informações financeiras':'Ocultar informações financeiras');
+    toggle.title=privacyHidden?'Mostrar informações financeiras':'Ocultar informações financeiras';
+    toggle.innerHTML=`<i data-lucide="${privacyHidden?'eye-off':'eye'}"></i>`;
+  }
+  icons();
+}
+$('#privacyToggle').addEventListener('click',()=>{
+ privacyHidden=!privacyHidden;
+ sessionStorage.setItem('jb_privacy_hidden',privacyHidden?'1':'0');
+ applyPrivacy();
+});
+
 const notify=s=>{const t=$('#toast');t.textContent=s;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3100)};
 const localKey='clara_financas_demo_v1';
 const stored=()=>{try{const d=JSON.parse(localStorage.getItem(localKey));return valid(d)?d:empty()}catch{return empty()}};
@@ -47,7 +83,7 @@ function totals(){const all=entries();const incomes=all.filter(e=>e.kind==='inco
 
 function button(label,act='new',kind='primary',icon='plus'){return `<button class="btn ${kind}" data-action="${act}"><i data-lucide="${icon}"></i>${label}</button>`}
 const titles={dashboard:['Visão geral','Tudo que importa, em um só lugar.','SEU PAINEL'],transactions:['Lançamentos','Acompanhe receitas, despesas e recorrências.','MOVIMENTAÇÕES'],'general-expenses':['Despesas gerais','Gastos variáveis efetivamente pagos.','REGIME DE CAIXA'],'fixed-costs':['Custos fixos','Despesas recorrentes e fixas pagas.','REGIME DE CAIXA'],spending:['Gráficos de gastos','Veja a distribuição dos seus gastos pagos.','ANÁLISE DE DESPESAS'],cards:['Cartões e faturas','Controle seus cartões e pagamentos futuros.','SEUS CARTÕES'],investments:['Investimentos','Acompanhe sua carteira e aportes.','PATRIMÔNIO'],reports:['Relatórios','Entenda a evolução do seu dinheiro.','ANÁLISE FINANCEIRA'],goals:['Metas','Transforme planos em conquistas.','PLANEJAMENTO'],data:['Importação e backup','Seus dados, sempre sob seu controle.','FERRAMENTAS'],profile:['Meu perfil','Personalize suas informações de usuário.','MINHA CONTA'],settings:['Configurações','Personalize sua experiência.','PREFERÊNCIAS']};
-function render(){const [title,sub,ey]=titles[page];$('#pageTitle').textContent=title;$('#pageSubtitle').textContent=sub;$('#eyebrow').textContent=ey;$('#crumb').textContent=title;$$('[data-page]').forEach(x=>x.classList.toggle('active',x.dataset.page===page));$$('[data-scope]').forEach(x=>x.classList.toggle('active',x.dataset.scope===scope));$('#month').value=month;$('#month').closest('label').style.display=scope==='month'?'flex':'none';$('#filters').classList.toggle('hidden',['data','settings','profile'].includes(page));$('#pageActions').innerHTML=({dashboard:button('Novo lançamento'),transactions:button('Novo lançamento'),'general-expenses':button('Nova despesa'), 'fixed-costs':button('Novo custo fixo'), spending:'',cards:button('Novo cartão','new-card'),investments:button('Novo investimento','new-invest'),reports:button('Exportar CSV','export-csv','outline','download'),goals:button('Nova meta','new-goal'),data:'',profile:'',settings:''})[page];$('#pageContent').innerHTML=({dashboard:dashboard,transactions:transactions,'general-expenses':()=>expensePage('general'),'fixed-costs':()=>expensePage('fixed'),spending:spending,cards:cards,investments:investments,reports:reports,goals:goals,data:dataPage,profile:profilePage,settings:settings})[page]();icons()}
+function render(){const [title,sub,ey]=titles[page];$('#pageTitle').textContent=title;$('#pageSubtitle').textContent=sub;$('#eyebrow').textContent=ey;$('#crumb').textContent=title;$$('[data-page]').forEach(x=>x.classList.toggle('active',x.dataset.page===page));$$('[data-scope]').forEach(x=>x.classList.toggle('active',x.dataset.scope===scope));$('#month').value=month;$('#month').closest('label').style.display=scope==='month'?'flex':'none';$('#filters').classList.toggle('hidden',['data','settings','profile'].includes(page));$('#pageActions').innerHTML=({dashboard:button('Novo lançamento'),transactions:button('Novo lançamento'),'general-expenses':button('Nova despesa'), 'fixed-costs':button('Novo custo fixo'), spending:'',cards:button('Novo cartão','new-card'),investments:button('Novo investimento','new-invest'),reports:button('Exportar CSV','export-csv','outline','download'),goals:button('Nova meta','new-goal'),data:'',profile:'',settings:''})[page];$('#pageContent').innerHTML=({dashboard:dashboard,transactions:transactions,'general-expenses':()=>expensePage('general'),'fixed-costs':()=>expensePage('fixed'),spending:spending,cards:cards,investments:investments,reports:reports,goals:goals,data:dataPage,profile:profilePage,settings:settings})[page]();applyPrivacy()}
 const kpi=(label,value,icon,sub='',cls='')=>`<div class="card kpi"><div class="label">${label}<i data-lucide="${icon}"></i></div><div class="value ${cls}">${value}</div><div class="sub">${sub}</div></div>`;
 function stats(){let x=totals();return `<div class="kpis">${kpi('Saldo do período',fmt(x.balance),'wallet','Receitas − despesas pagas',x.balance<0?'negative':'')}${kpi('Receitas',fmt(x.income),'trending-up','Entradas lançadas','positive')}${kpi('Despesas pagas',fmt(x.expenses),'trending-down','Inclui faturas pagas','negative')}${kpi('Compras no cartão',fmt(x.cardBills),'credit-card','Valor nas faturas do período')}</div>`}
 function monthly(m){const income=sum(entries().filter(e=>e.kind==='income'&&ym(e.date)===m));return {income,expenses:sum(cashExpenses(m))}}
