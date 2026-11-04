@@ -10,8 +10,9 @@ const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const parseNum=v=>Number(String(v??'0').replace(',','.'))||0;
 const sum=(arr,key='amount')=>arr.reduce((a,x)=>a+Number(x[key]||0),0);
 const monthTitle=m=>{const [y,n]=m.split('-').map(Number);return new Date(y,n-1,1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'})};
-const defaultCategories=['Moradia','Alimentação','Transporte','Saúde','Educação','Lazer','Assinaturas','Compras','Viagens','Salário','Freelance','Rendimentos','Outros'];
-const empty=()=>({version:1,transactions:[],cards:[],investments:[],goals:[],paidInvoices:{},categories:[...defaultCategories]});
+const defaultCategoriesByKind={income:['Salário','Freelance','Rendimentos','Bônus','Reembolsos','Outros'],expense:['Moradia','Alimentação','Transporte','Saúde','Educação','Lazer','Assinaturas','Compras','Viagens','Outros']};
+const defaultCategories=[...new Set([...defaultCategoriesByKind.expense,...defaultCategoriesByKind.income])];
+const empty=()=>({version:1,transactions:[],cards:[],investments:[],goals:[],paidInvoices:{},categoriesByKind:{income:[...defaultCategoriesByKind.income],expense:[...defaultCategoriesByKind.expense]}});
 const valid=d=>d&&typeof d==='object'&&Array.isArray(d.transactions)&&Array.isArray(d.cards)&&Array.isArray(d.investments)&&Array.isArray(d.goals)&&d.paidInvoices&&typeof d.paidInvoices==='object';
 let cardFilter='all';
 let db=empty(),page='dashboard',scope='month',month=today().slice(0,7),client=null,user=null,cloud=false,saving=Promise.resolve(),modalType='',editing=null,toastTimer;
@@ -218,31 +219,53 @@ function dataPage(){return `<div class="settings-grid"><div class="card setting-
 function profilePage(){const info=profileInfo();return `<form id="profileForm" class="card profile-form"><h2>Informações pessoais</h2><p class="profile-note">Seu nome aparecerá no menu e no canto superior da página. ${cloud?'As informações são sincronizadas na sua conta Supabase.':'No modo demonstração, estas informações ficam neste navegador.'}</p><div class="field-row"><label>Nome completo<input name="full_name" maxlength="100" autocomplete="name" required value="${esc(info.full_name||'')}" placeholder="Seu nome"></label><label>Como prefere ser chamado(a)<input name="display_name" maxlength="50" value="${esc(info.display_name||'')}" placeholder="Apelido (opcional)"></label></div><label>E-mail de acesso<input type="email" readonly value="${esc(user?.email||'Modo demonstração')}"></label><label>Observações sobre o perfil (opcional)<textarea name="notes" maxlength="500" placeholder="Informações que deseja guardar neste perfil">${esc(info.notes||'')}</textarea></label><button class="btn primary" type="submit"><i data-lucide="save"></i>Salvar alterações</button><p id="profileFeedback" role="status" class="helper"></p></form>`}
 $('#pageContent').addEventListener('submit',async e=>{if(e.target.id!=='profileForm')return;e.preventDefault();const form=e.target,btn=form.querySelector('button[type=submit]');const f=new FormData(form);const profile={full_name:String(f.get('full_name')||'').trim(),display_name:String(f.get('display_name')||'').trim(),notes:String(f.get('notes')||'').trim()};if(!profile.full_name){form.querySelector('#profileFeedback').textContent='Informe seu nome.';return}btn.disabled=true;try{if(cloud){const {data,error}=await client.auth.updateUser({data:profile});if(error)throw error;user=data.user||user}else localStorage.setItem('james_bruna_profile',JSON.stringify(profile));updateProfileHeader();form.querySelector('#profileFeedback').textContent='Perfil atualizado com sucesso.';notify('Perfil salvo.')}catch(err){form.querySelector('#profileFeedback').textContent='Erro ao salvar perfil: '+err.message}finally{btn.disabled=false}});
 function categoriesPage(){
- const names=categoryNames();
- return `<div class="card panel"><div class="panel-title"><h2>Edição de Categorias</h2><small>${names.length} categorias cadastradas</small></div>
- <form id="categoryForm" class="category-add"><label for="newCategoryName">Nome da nova categoria<input id="newCategoryName" name="name" maxlength="60" autocomplete="off" required placeholder="Ex.: Pets, Presentes, Academia"></label><button class="btn primary" type="submit"><i data-lucide="plus"></i>Adicionar categoria</button></form>
- <div class="category-list">${names.map(name=>`<div class="category-item"><span>${esc(name)}</span><span><button class="btn outline" data-action="rename-category" data-name="${esc(name)}"><i data-lucide="pencil"></i>Renomear</button><button class="cell-action" title="Excluir categoria" data-action="delete-category" data-name="${esc(name)}"><i data-lucide="trash-2"></i></button></span></div>`).join('')}</div>
- <p class="helper">Ao renomear uma categoria, os lançamentos anteriores também são atualizados. A exclusão só é permitida quando a categoria não está em uso.</p></div>`;
+ const renderGroup=(kind,label,example)=>{
+  const names=categoryNames(kind);
+  return `<section class="card panel category-kind-panel"><div class="panel-title"><h2>${label}</h2><small>${names.length} categorias</small></div>
+  <form class="category-add" data-category-kind="${kind}"><label>Nova categoria de ${label.toLowerCase()}<input name="name" maxlength="60" autocomplete="off" required placeholder="${example}"></label><button class="btn primary" type="submit"><i data-lucide="plus"></i> Adicionar</button></form>
+  <div class="category-list">${names.map(name=>`<div class="category-item"><span>${esc(name)}</span><span><button class="btn outline" data-action="rename-category" data-kind="${kind}" data-name="${esc(name)}"><i data-lucide="pencil"></i>Renomear</button><button class="cell-action" title="Excluir categoria" data-action="delete-category" data-kind="${kind}" data-name="${esc(name)}"><i data-lucide="trash-2"></i></button></span></div>`).join('')}</div></section>`;
+ };
+ return `<div class="category-kind-grid">${renderGroup('income','Receitas','Ex.: Salário, Bônus, Freelance')}${renderGroup('expense','Despesas','Ex.: Moradia, Pets, Transporte')}</div><p class="helper">As categorias de receitas e despesas são independentes. É possível usar o mesmo nome em ambas. Categorias em uso não podem ser excluídas.</p>`;
 }
 $('#pageContent').addEventListener('submit',e=>{
- if(e.target.id!=='categoryForm')return;
+ const form=e.target,kind=form.dataset.categoryKind;
+ if(!kind)return;
  e.preventDefault();
- const input=e.target.elements.name,name=input.value.trim();
+ const name=String(new FormData(form).get('name')||'').trim();
  if(!name)return;
- if(categoryNames().some(c=>c.toLocaleLowerCase('pt-BR')===name.toLocaleLowerCase('pt-BR')))return notify('Essa categoria já existe.');
- transact(()=>{db.categories=[...categoryNames(),name]});notify('Categoria adicionada.');
+ if(categoryNames(kind).some(c=>c.toLocaleLowerCase('pt-BR')===name.toLocaleLowerCase('pt-BR')))return notify('Essa categoria já existe nesse tipo.');
+ transact(()=>{ensureCategoryKinds();db.categoriesByKind[kind]=[...db.categoriesByKind[kind],name]});
+ notify('Categoria de '+(kind==='income'?'receita':'despesa')+' adicionada.');
 });
 function settings(){return `<div class="settings-grid"><div class="card setting-card"><h2>Preferências</h2><p>Moeda: real brasileiro (BRL). Idioma: português (Brasil).</p><button class="btn outline" data-action="theme"><i data-lucide="moon"></i>Alternar modo escuro</button></div><div class="card setting-card"><h2>Armazenamento</h2><p>${cloud?'Dados salvos na nuvem na conta autenticada com Supabase.':'Dados salvos apenas neste navegador, sem autenticação e sem sincronização.'}</p>${button('Baixar meus dados','backup','outline','download')}</div><div class="card setting-card"><h2>Limpar todos os dados</h2><p>Exclui permanentemente os dados deste espaço. Faça backup antes.</p>${button('Apagar dados','wipe','outline','trash-2')}</div></div>`}
 const field=(name,label,type='text',value='',extras='')=>`<label>${label}<input name="${name}" type="${type}" value="${esc(value)}" ${extras}></label>`;
 const sel=(name,label,opts,v)=>`<label>${label}<select name="${name}">${opts.map(([value,title])=>`<option value="${esc(value)}" ${String(value)===String(v)?'selected':''}>${esc(title)}</option>`).join('')}</select></label>`;
-const categoryNames=()=>[...new Set([...(Array.isArray(db.categories)?db.categories:defaultCategories),...db.transactions.map(t=>t.category).filter(Boolean)])].sort((a,b)=>a.localeCompare(b,'pt-BR'));
-const categories=()=>categoryNames().map(v=>[v,v]);
+const categoryKind=k=>k==='income'?'income':'expense';
+function ensureCategoryKinds(){
+ if(db.categoriesByKind&&Array.isArray(db.categoriesByKind.income)&&Array.isArray(db.categoriesByKind.expense))return;
+ const legacy=Array.isArray(db.categories)?db.categories:defaultCategories;
+ const usedIncome=new Set(db.transactions.filter(t=>t.kind==='income').map(t=>t.category).filter(Boolean));
+ const usedExpense=new Set(db.transactions.filter(t=>t.kind!=='income').map(t=>t.category).filter(Boolean));
+ const knownIncome=new Set(defaultCategoriesByKind.income),knownExpense=new Set(defaultCategoriesByKind.expense);
+ const income=[],expense=[];
+ for(const name of new Set([...legacy,...usedIncome,...usedExpense])){
+  if(usedIncome.has(name)||knownIncome.has(name)||(!knownExpense.has(name)&&!usedExpense.has(name)))income.push(name);
+  if(usedExpense.has(name)||knownExpense.has(name)||(!knownIncome.has(name)&&!usedIncome.has(name)))expense.push(name);
+ }
+ db.categoriesByKind={income,expense};
+}
+const categoryNames=(kind='expense')=>{
+ ensureCategoryKinds();
+ const k=categoryKind(kind);
+ return [...new Set([...db.categoriesByKind[k],...db.transactions.filter(t=>categoryKind(t.kind)===k).map(t=>t.category).filter(Boolean)])].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+};
+const categories=kind=>categoryNames(kind).map(v=>[v,v]);
 function openForm(type,id=null,cardDefault=null){modalType=type;editing=id;const record=(type==='tx'?db.transactions:type==='card'?db.cards:type==='invest'?db.investments:db.goals).find(x=>x.id===id)||{};$('#modalTitle').textContent=(id?'Editar ':'Novo ')+({tx:'lançamento',card:'cartão',invest:'investimento',goal:'meta'})[type];let html='';if(type==='tx'){
  const isIncome=(record.kind||'expense')==='income';
  html=`<div class="transaction-kind">${sel('kind','Tipo de lançamento',[['expense','Despesa'],['income','Receita']],record.kind||'expense')}</div>`
  +field('description','Descrição','text',record.description||'','required maxlength="140"')
  +`<div class="field-row">${field('amount','Valor (R$)','number',record.amount??'','required min="0.01" step="0.01"')}${field('date','Data','date',record.date||today(),'required')}</div>`
- +sel('category','Categoria',categories(),record.category||'Outros')
+ +sel('category','Categoria',categories(record.kind||'expense'),record.category||'Outros')
  +`<div id="expenseOnly" ${isIncome?'hidden':''}>`
  +sel('expenseType','Classificação da despesa',[['general','Despesa geral'],['fixed','Custo fixo']],record.expenseType||(page==='fixed-costs'?'fixed':'general'))
  +sel('cardId','Forma de pagamento',[['','Conta / dinheiro'],...db.cards.map(c=>[c.id,c.name])],record.cardId||cardDefault||'')
@@ -251,11 +274,21 @@ function openForm(type,id=null,cardDefault=null){modalType=type;editing=id;const
  +`<div class="transaction-recurrence">${sel('repeat',isIncome?'Recorrência da receita':'Recorrência',[['none','Não repetir'],['monthly','Mensal (até 10 anos)']],record.repeat||'none')}</div>`
  +`${id?'<p class="edit-warning">A edição altera o lançamento original e recalcula parcelas vinculadas. Confira os valores após salvar.</p>':''}`;
 }else if(type==='card'){html=field('name','Nome do cartão','text',record.name||'','required')+field('last4','Últimos 4 dígitos (opcional)','text',record.last4||'','maxlength="4" pattern="[0-9]{4}"')+`<div class="field-row">${field('closingDay','Dia de fechamento','number',record.closingDay||10,'required min="1" max="28"')}${field('dueDay','Dia de vencimento','number',record.dueDay||17,'required min="1" max="28"')}</div>`+field('limit','Limite do cartão (R$)','number',record.limit||0,'min="0" step="0.01"')}else if(type==='invest'){html=field('name','Nome do ativo','text',record.name||'','required')+sel('category','Classe',[['Renda fixa','Renda fixa'],['Ações','Ações'],['Fundos','Fundos'],['FIIs','FIIs'],['Previdência','Previdência'],['Criptoativos','Criptoativos'],['Outros','Outros']],record.category||'Renda fixa')+field('date','Data da aplicação / avaliação','date',record.date||today(),'required')+`<div class="field-row">${field('invested','Valor aplicado','number',record.invested||0,'required min="0" step="0.01"')}${field('balance','Valor atual','number',record.balance||0,'required min="0" step="0.01"')}</div>`}else{html=field('name','Nome da meta','text',record.name||'','required')+`<div class="field-row">${field('target','Valor da meta','number',record.target||0,'required min="0.01" step="0.01"')}${field('current','Valor acumulado','number',record.current||0,'required min="0" step="0.01"')}</div>`+field('deadline','Prazo (opcional)','date',record.deadline||'')}$('#formFields').innerHTML=html;if(type==='tx')updateTransactionKind();$('#modal').showModal()}
+function updateTransactionCategory(){
+ const form=$('#entryForm'),kind=form.querySelector('[name="kind"]')?.value;
+ const select=form.querySelector('[name="category"]');
+ if(!select)return;
+ const previous=select.value;
+ const choices=categories(kind);
+ select.innerHTML=choices.map(([value,label])=>`<option value="${esc(value)}">${esc(label)}</option>`).join('');
+ select.value=choices.some(([value])=>value===previous)?previous:(choices.some(([value])=>value==='Outros')?'Outros':choices[0]?.[0]||'');
+}
 function updateTransactionKind(){
  const form=$('#entryForm'),kind=form.querySelector('[name="kind"]')?.value;
  const expenseOnly=form.querySelector('#expenseOnly');
  if(!expenseOnly)return;
  const income=kind==='income';
+ updateTransactionCategory();
  expenseOnly.hidden=income;
  expenseOnly.querySelectorAll('input,select').forEach(el=>{el.disabled=income});
  const repeatLabel=form.querySelector('.transaction-recurrence label');
@@ -283,7 +316,7 @@ function updateInstallmentPreview(){
 $('#entryForm').addEventListener('input',e=>{if(modalType==='tx')updateInstallmentPreview()});
 $('#entryForm').addEventListener('change',e=>{if(modalType!=='tx')return;if(e.target.name==='kind')updateTransactionKind();else updateInstallmentPreview()});
 $('#closeModal').onclick=$('#cancelModal').onclick=()=>$('#modal').close();$('#modal').addEventListener('click',e=>{if(e.target===$('#modal'))$('#modal').close()});
-$('#entryForm').onsubmit=e=>{e.preventDefault();const f=Object.fromEntries(new FormData(e.currentTarget).entries()),obj={...f};if(modalType==='tx'){obj.amount=parseNum(obj.amount);if(!Number.isFinite(obj.amount)||obj.amount<=0){notify('Informe um valor maior que zero.');return}if(obj.kind==='income'){
+$('#entryForm').onsubmit=e=>{e.preventDefault();const f=Object.fromEntries(new FormData(e.currentTarget).entries()),obj={...f};if(modalType==='tx'){if(!categoryNames(obj.kind).includes(obj.category)){notify('Selecione uma categoria válida para esse tipo de lançamento.');return;}obj.amount=parseNum(obj.amount);if(!Number.isFinite(obj.amount)||obj.amount<=0){notify('Informe um valor maior que zero.');return}if(obj.kind==='income'){
  obj.cardId='';obj.installments=1;obj.expenseType='general';
 }else{
  if(!Number.isInteger(Number(obj.installments))||+obj.installments<1||+obj.installments>240){notify('A quantidade deve ser de 1 a 240 parcelas.');return}
@@ -297,16 +330,20 @@ function makeCsv(rows){return '\uFEFF'+[csvFields,...rows].map(r=>r.map(csvQuote
 function parseCsv(text){text=text.replace(/^\uFEFF/,'');let rows=[],row=[],cur='',q=false;for(let i=0;i<text.length;i++){let c=text[i];if(c==='"'){if(q&&text[i+1]==='"'){cur+='"';i++}else q=!q}else if(c===';'&&!q){row.push(cur);cur=''}else if((c==='\n'||c==='\r')&&!q){if(c==='\r'&&text[i+1]==='\n')i++;row.push(cur);if(row.some(v=>v.trim()))rows.push(row);row=[];cur=''}else cur+=c}if(q)throw Error('CSV com aspas não fechadas');if(cur||row.length){row.push(cur);rows.push(row)}return rows}
 function csvImport(text){const rows=parseCsv(text),header=rows.shift()?.map(x=>x.trim().toLowerCase());if(!header||csvFields.some((v,i)=>header[i]!==v))throw Error('Cabeçalho inválido. Use a planilha modelo.');const add=[];for(let i=0;i<rows.length;i++){const [tipo,descricao,valor,data,categoria,cartao,parcelas,recorrencia]=rows[i].map(s=>(s||'').trim());let kind=tipo.toLowerCase();if(!['income','expense','receita','despesa'].includes(kind))throw Error('Linha '+(i+2)+': tipo inválido');kind=['income','receita'].includes(kind)?'income':'expense';const amount=parseNum(valor.replace(/\./g,'').replace(',','.'));const normalizedVal=/^\d+(\.\d+)?$/.test(valor)?Number(valor):amount;const date=/^\d{4}-\d{2}-\d{2}$/.test(data)?data:null;const card=db.cards.find(c=>c.name.toLowerCase()===cartao.toLowerCase());if(!descricao||!date||!Number.isFinite(normalizedVal)||normalizedVal<=0||(!Number.isInteger(+parcelas)&&parcelas)||(+parcelas>240)||(+parcelas<1&&parcelas)||cartao&&!card)throw Error('Linha '+(i+2)+': dados inválidos (cartão deve existir pelo nome).');let cardId=kind==='expense'&&card?card.id:'';add.push({id:uid(),kind,description:descricao,amount:normalizedVal,date,category:categoria||'Outros',cardId,installments:cardId?+parcelas||1:1,repeat:!cardId&&recorrencia==='monthly'?'monthly':'none'})}return add}
 $('#pageContent').addEventListener('click',async e=>{const b=e.target.closest('[data-action]');if(!b)return;const a=b.dataset.action,id=b.dataset.id;if(a==='clear-invoice-filters'){cardFilter='all';scope='all';render();notify('Filtros das faturas limpos.');return;}if(a==='rename-category'){
-  const old=b.dataset.name;
+  const old=b.dataset.name,kind=categoryKind(b.dataset.kind);
   const input=prompt('Novo nome da categoria:',old);if(input===null)return;
   const name=input.trim();if(!name)return notify('Informe um nome.');
-  if(name!==old&&categoryNames().some(v=>v.toLocaleLowerCase('pt-BR')===name.toLocaleLowerCase('pt-BR')))return notify('Essa categoria já existe.');
-  transact(()=>{db.categories=categoryNames().map(v=>v===old?name:v);db.transactions.forEach(t=>{if(t.category===old)t.category=name;});});notify('Categoria renomeada.');return;
+  if(name!==old&&categoryNames(kind).some(v=>v.toLocaleLowerCase('pt-BR')===name.toLocaleLowerCase('pt-BR')))return notify('Essa categoria já existe nesse tipo.');
+  transact(()=>{ensureCategoryKinds();db.categoriesByKind[kind]=categoryNames(kind).map(v=>v===old?name:v);db.transactions.forEach(t=>{if(categoryKind(t.kind)===kind&&t.category===old)t.category=name;});});
+  notify('Categoria renomeada.');return;
  }
  if(a==='delete-category'){
-  const name=b.dataset.name;
-  if(db.transactions.some(t=>t.category===name))return notify('Esta categoria está em uso. Renomeie-a ou altere os lançamentos antes.');
-  if(confirm('Excluir a categoria '+name+'?')){transact(()=>{db.categories=categoryNames().filter(v=>v!==name)});notify('Categoria excluída.');}return;
+  const name=b.dataset.name,kind=categoryKind(b.dataset.kind);
+  if(db.transactions.some(t=>categoryKind(t.kind)===kind&&t.category===name))return notify('Esta categoria está em uso. Altere os lançamentos antes.');
+  if(confirm('Excluir a categoria '+name+' de '+(kind==='income'?'receitas':'despesas')+'?')){
+   transact(()=>{ensureCategoryKinds();db.categoriesByKind[kind]=categoryNames(kind).filter(v=>v!==name)});
+   notify('Categoria excluída.');
+  }return;
  }
  if(a==='new'||a==='new-card-expense')return openForm('tx',null,a==='new-card-expense'&&db.cards.length?db.cards[0].id:null);if(a==='new-card')return openForm('card');if(a==='new-invest')return openForm('invest');if(a==='new-goal')return openForm('goal');if(a.startsWith('edit-'))return openForm(({ 'edit-tx':'tx','edit-card':'card','edit-invest':'invest','edit-goal':'goal'})[a],id);if(a.startsWith('delete-')){const table=({'delete-tx':'transactions','delete-card':'cards','delete-invest':'investments','delete-goal':'goals'})[a];if(table==='cards'&&db.transactions.some(t=>t.cardId===id)){notify('Exclua ou altere primeiro as compras vinculadas ao cartão.');return}if(confirm('Excluir este registro?'))transact(()=>db[table]=db[table].filter(x=>x.id!==id));return}if(a==='edit-payment'){
   const key=`${id}_${b.dataset.month}`;

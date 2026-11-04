@@ -150,3 +150,13 @@
 .transaction-recurrence{margin-top:3px}
 #expenseOnly{padding:14px 15px 2px;border:1px solid var(--edge);border-radius:11px;margin:4px 0 16px}
 #expenseOnly .installment-preview{margin-top:6px}
+
+/* v14: edição separada de categorias por tipo de lançamento */
+.category-kind-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:start}
+.category-kind-panel{min-width:0}
+.category-kind-panel .category-add{margin-top:8px}
+.category-kind-panel .category-add label{min-width:0}
+.category-kind-panel .category-item{min-width:0;flex-wrap:wrap}
+.category-kind-panel .category-item>span:first-child{overflow-wrap:anywhere}
+.category-kind-panel .category-item>span:last-child{margin-left:auto}
+@media(max-width:1000px){.category-kind-grid{grid-template-columns:1fr}}
