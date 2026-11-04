@@ -87,3 +87,57 @@
 .sidebar .category-submenu-label { font-size: 10px; letter-spacing: .08em; margin-top: 12px; opacity: .72; }
 .sidebar .category-submenu-link { padding-left: 24px; }
 .sidebar .category-submenu-link.active { font-weight: 600; }
+
+
+/* v12: menu chumbo, ícones verdes, alinhamento consistente */
+.sidebar{background:#292524!important;border-right:1px solid #44403c!important;color:#fff!important}
+.sidebar .brand{color:#fff!important;display:flex;align-items:center;gap:5px;line-height:1.35}
+.sidebar .brand-dot{color:#fff!important}
+.sidebar .brand-icon{border-color:#57534e!important;background:#44403c!important;color:#2dd4bf!important}
+.sidebar .brand-icon svg{stroke:#2dd4bf!important}
+.sidebar .side-label{color:#a8a29e!important}
+.sidebar nav{gap:5px}
+.sidebar nav button{color:#fff!important;display:flex;align-items:center;gap:12px;min-height:43px;line-height:1.35;white-space:normal}
+.sidebar nav button svg{color:#2dd4bf!important;stroke:#2dd4bf!important;width:19px!important;height:19px!important;min-width:19px;flex:0 0 19px;vertical-align:middle}
+.sidebar nav button:hover,.sidebar nav button.active{background:#0f766e!important;color:#fff!important}
+.sidebar nav button.active svg,.sidebar nav button:hover svg{color:#fff!important;stroke:#fff!important}
+.sidebar .category-submenu-link{padding-left:21px}
+.sidebar-bottom{border-top-color:#57534e!important}
+.sidebar .account b{color:#fff!important}.sidebar .account span{color:#d6d3d1!important}
+.sidebar #logout,.sidebar #logout svg{color:#2dd4bf!important;stroke:#2dd4bf!important}
+.sidebar .avatar{background:#0f766e!important;color:#fff!important}
+
+/* Período sem calendário: dois seletores e setas */
+.month-navigation{display:flex;align-items:end;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.month-arrow{width:42px;height:42px;display:grid;place-items:center;border:1px solid var(--edge);border-radius:10px;background:var(--card);color:var(--brand)}
+.month-arrow:hover{background:var(--soft)}
+.month-arrow svg{width:19px;height:19px}
+.month-select-label{display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:600;color:var(--muted)}
+.month-select-label select{min-width:145px;height:42px;border:1px solid var(--edge);border-radius:10px;background:var(--card);color:var(--text);padding:0 10px;outline-color:var(--brand)}
+.year-select-label select{min-width:95px}
+.filter-bar{align-items:end}
+.balance-views{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:0 0 12px}
+.balance-panel{padding:23px;min-width:0}
+.balance-top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:13px;font-weight:600}
+.balance-top>span:first-child{display:flex;align-items:center;gap:9px}
+.balance-top svg{width:19px;height:19px;color:var(--brand)}
+.balance-panel>strong{display:block;font-size:clamp(22px,3vw,33px);letter-spacing:-.7px;overflow-wrap:anywhere;margin:16px 0 7px}
+.balance-panel p{color:var(--muted);font-size:12px;margin:0}
+.balance-projected{border-color:#0f766e60;background:linear-gradient(125deg,var(--card),var(--soft))}
+.balance-tag{padding:4px 9px;border-radius:999px;background:var(--bg);color:var(--brand);font-size:11px}
+.balance-disclaimer{font-size:12px;color:var(--muted);margin:0 0 22px}
+.invoice-filter-top{padding:19px;margin-bottom:20px}
+.invoice-filter-top-head{display:flex;justify-content:space-between;align-items:start;gap:15px;flex-wrap:wrap}
+.invoice-filter-top h2{font-size:17px;margin:0 0 4px}
+.invoice-filter-top .invoice-filter{margin:14px 0 0}
+.file-upload{display:grid;gap:9px;padding:14px;border:1px dashed var(--edge);border-radius:11px;background:var(--bg);margin:12px 0 15px}
+.file-upload input[type=file]{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
+.file-choose{display:inline-flex;align-items:center;gap:9px;width:fit-content;max-width:100%;padding:10px 14px;border:1px solid var(--brand);border-radius:9px;color:var(--brand);background:var(--card);font-size:13px;font-weight:600;cursor:pointer}
+.file-choose svg{width:17px;height:17px}.file-choose:hover{background:var(--soft)}
+.file-upload small{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.category-add{padding:16px;border:1px solid var(--edge);border-radius:12px;background:var(--bg)}
+.category-add label{display:grid;gap:7px;font-size:13px;font-weight:600;color:var(--text)}
+.category-add input{min-height:43px;width:100%;padding:10px 13px;border:1px solid var(--edge);border-radius:9px;background:var(--card);color:var(--text);outline-color:var(--brand)}
+.category-add button{min-height:43px}
+@media(max-width:1000px){.filter-bar{align-items:flex-start;flex-wrap:wrap}.month-navigation{justify-content:flex-start}}
+@media(max-width:650px){.balance-views{grid-template-columns:1fr}.month-navigation{width:100%;gap:6px}.month-select-label{flex:1;min-width:0}.month-select-label select{width:100%;min-width:0}.year-select-label{flex:0 0 92px}.month-arrow{width:36px;min-width:36px}.sidebar nav button{justify-content:center}.sidebar nav button svg{margin:0}}
