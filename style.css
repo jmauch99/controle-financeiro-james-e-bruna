@@ -141,3 +141,12 @@
 .category-add button{min-height:43px}
 @media(max-width:1000px){.filter-bar{align-items:flex-start;flex-wrap:wrap}.month-navigation{justify-content:flex-start}}
 @media(max-width:650px){.balance-views{grid-template-columns:1fr}.month-navigation{width:100%;gap:6px}.month-select-label{flex:1;min-width:0}.month-select-label select{width:100%;min-width:0}.year-select-label{flex:0 0 92px}.month-arrow{width:36px;min-width:36px}.sidebar nav button{justify-content:center}.sidebar nav button svg{margin:0}}
+
+/* v13 — formulário inteligente: receitas sem campos exclusivos de despesas */
+#expenseOnly[hidden]{display:none!important}
+.transaction-kind{margin-bottom:16px;padding:14px 15px 1px;background:var(--bg);border:1px solid var(--edge);border-radius:11px}
+.transaction-kind label{font-weight:700}
+.transaction-kind select{font-weight:600;min-height:44px}
+.transaction-recurrence{margin-top:3px}
+#expenseOnly{padding:14px 15px 2px;border:1px solid var(--edge);border-radius:11px;margin:4px 0 16px}
+#expenseOnly .installment-preview{margin-top:6px}
